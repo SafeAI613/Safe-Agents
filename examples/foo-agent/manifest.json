@@ -1,0 +1,31 @@
+{
+  "name": "Foo Agent",
+  "version": "1.0.0",
+  "description": "Minimal reference agent for the Safe-Agents platform: answers, then asks for approval (HITL).",
+  "creator_name": "foo",
+  "contact_information": "foo@example.com",
+  "release_date": "2026-10-21",
+  "repository_url": "https://github.com/foo/foo-agent",
+  "target_audience": "Agent developers",
+  "professional_fields": ["Software Development"],
+  "tasks_capable_of_performing": ["Lorem ipsum dolor sit amet"],
+  "examples_of_suitable_questions": ["Lorem ipsum dolor sit amet?"],
+  "technical_specifications": {
+    "framework": "LangGraph",
+    "llm_provider": "OpenRouter",
+    "supported_models": ["meta-llama/llama-3.1-70b-instruct"],
+    "features_enabled": { "rag": false, "web_search": false, "code_execution": false, "mcp_support": false },
+    "required_permissions": []
+  },
+  "runtime": {
+    "manifest_version": 1,
+    "graph_id": "foo_agent",
+    "graph_entry": "agent/graph.py:graph",
+    "python": ">=3.11,<3.13",
+    "source_url": "https://github.com/foo/foo-agent/archive/refs/tags/v1.0.0.zip",
+    "input_schema": "messages",
+    "hitl": true,
+    "env_optional": ["FOO_AGENT_FAKE_LLM"],
+    "default_model": "meta-llama/llama-3.1-70b-instruct"
+  }
+}

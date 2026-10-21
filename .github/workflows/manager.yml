@@ -1,0 +1,31 @@
+name: manager
+
+on:
+  push:
+    paths: ["manager/**", "schemas/**", "examples/**", ".github/workflows/manager.yml"]
+  pull_request:
+    paths: ["manager/**", "schemas/**", "examples/**", ".github/workflows/manager.yml"]
+
+jobs:
+  checks:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: manager
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked
+      - run: uv run ruff check src tests
+      - run: uv run ruff format --check src tests
+      - run: uv run mypy
+      - name: Unit tests
+        run: uv run pytest
+      - name: Integration test (real uv + langgraph dev)
+        run: uv run pytest -m integration

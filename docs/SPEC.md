@@ -72,7 +72,6 @@ SafeAgents/
   "graph_id": "foo_agent",
   "python": ">=3.11,<3.13",
   "source_url": "https://github.com/foo/bar/archive/refs/tags/v1.0.0.zip",
-  "sha256": "…",
   "input_schema": "messages",
   "accepts_files": [".pdf", ".txt"],
   "hitl": true,
@@ -118,7 +117,7 @@ SafeAgents/
 
 ### 4.3 הפעלה
 - Supervisor מקצה פורט פנוי מטווח (2100–2199), מריץ:
-  `.venv/bin/langgraph dev --host 127.0.0.1 --port <p> --no-browser --no-reload -c langgraph.json`
+  `.venv/bin/langgraph dev --host 127.0.0.1 --port <p> --no-browser --no-reload --config langgraph.json`
   עם env מוזרק: `OPENROUTER_API_KEY`, מפתחות MCP/אופציונליים מה-keychain, `LANGSMITH_*` אם הוגדר.
 - Health-check עד `/ok` → מצב `running`. Lazy start (בכניסה לצ'אט) + כיבוי אחרי X דקות חוסר פעילות + כיבוי כולל בסגירת האפליקציה (Job Object ב-Windows כדי שלא יישארו תהליכים יתומים).
 
@@ -157,6 +156,7 @@ const stream = useStream({ apiUrl: `http://127.0.0.1:${port}`, assistantId: grap
 ## 6. אבטחה (סטנדרט תעשייה – חובה)
 - **קוד אייג'נט הוא קוד לא-מהימן**: אישור התקנה מציג `required_permissions` (כמו הרשאות אפליקציה במובייל); התקנה רק מהקטלוג המאושר; אימות sha256; אין `shell=True`.
 - כל השרתים קשורים ל-`127.0.0.1` בלבד; ה-Manager דורש token; CSP של Tauri מאפשר `connect-src` רק ל-localhost ול-openrouter/langsmith.
+- טלמטריה של `langgraph-cli` מכובה (`LANGGRAPH_CLI_NO_ANALYTICS=1`) – אין שליחת נתוני שימוש ללא הסכמה.
 - סודות אך ורק ב-OS keychain, לעולם לא בקבצי `.env` על הדיסק, לא בלוגים (masking).
 - הגנת Zip-Slip בחילוץ, מגבלת גודל הורדה.
 - שלב עתידי (מחוץ ל-MVP): הרצה תחת משתמש מוגבל / sandbox.

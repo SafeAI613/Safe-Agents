@@ -1,0 +1,211 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SafeAI613/Safe-Agents/schemas/manifest.schema.json",
+  "title": "Safe-Agents manifest",
+  "type": "object",
+  "required": [
+    "name",
+    "version",
+    "description",
+    "creator_name",
+    "contact_information",
+    "repository_url",
+    "technical_specifications",
+    "runtime"
+  ],
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1
+    },
+    "creator_name": {
+      "type": "string"
+    },
+    "contact_information": {
+      "type": "string"
+    },
+    "release_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "repository_url": {
+      "type": "string",
+      "format": "uri"
+    },
+    "download_url": {
+      "type": "string",
+      "format": "uri"
+    },
+    "target_audience": {
+      "type": "string"
+    },
+    "professional_fields": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "tasks_capable_of_performing": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "examples_of_suitable_questions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "technical_specifications": {
+      "type": "object",
+      "required": [
+        "framework",
+        "llm_provider"
+      ],
+      "properties": {
+        "framework": {
+          "const": "LangGraph"
+        },
+        "llm_provider": {
+          "const": "OpenRouter"
+        },
+        "supported_models": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "features_enabled": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "boolean"
+          }
+        },
+        "required_permissions": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "local_file_read",
+              "local_file_write",
+              "sandbox_code_execution",
+              "network_access"
+            ]
+          }
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "required": [
+        "manifest_version",
+        "graph_id",
+        "graph_entry",
+        "python",
+        "source_url",
+        "input_schema",
+        "default_model"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "manifest_version": {
+          "const": 1
+        },
+        "graph_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{2,63}$"
+        },
+        "graph_entry": {
+          "type": "string",
+          "pattern": "^[\\w./-]+\\.py:[A-Za-z_]\\w*$"
+        },
+        "python": {
+          "type": "string"
+        },
+        "source_url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://"
+        },
+        "input_schema": {
+          "enum": [
+            "messages"
+          ]
+        },
+        "accepts_files": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^\\.[a-z0-9]+$"
+          }
+        },
+        "hitl": {
+          "type": "boolean"
+        },
+        "env_required": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]*$"
+          }
+        },
+        "env_optional": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]*$"
+          }
+        },
+        "mcp_servers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "auth": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "key",
+                    "label"
+                  ],
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "pattern": "^[A-Z][A-Z0-9_]*$"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "secret": {
+                      "type": "boolean",
+                      "default": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "default_model": {
+          "type": "string",
+          "pattern": "^[\\w.-]+/[\\w.:-]+$"
+        }
+      }
+    }
+  }
+}
