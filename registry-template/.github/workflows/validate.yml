@@ -1,0 +1,52 @@
+name: validate-registry
+
+on:
+  pull_request:
+    paths: ["registry.json"]
+  push:
+    branches: [main]
+    paths: ["registry.json"]
+
+# The check installs and starts agent code from the PR, so it runs with a read-only token
+# and no secrets. Never switch this to `pull_request_target`.
+permissions:
+  contents: read
+
+env:
+  # Pin the validator to a released tag of the platform once one exists.
+  MANAGER_REF: main
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install the validator
+        run: >
+          uv tool install
+          "safe-agents-manager @ git+https://github.com/SafeAI613/Safe-Agents@${MANAGER_REF}#subdirectory=manager"
+
+      - name: Get the registry of the target branch
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            git show "origin/${BASE_REF}:registry.json" > "$RUNNER_TEMP/base.json" 2>/dev/null \
+              || rm -f "$RUNNER_TEMP/base.json"
+          else
+            git show "HEAD~1:registry.json" > "$RUNNER_TEMP/base.json" 2>/dev/null \
+              || rm -f "$RUNNER_TEMP/base.json"
+          fi
+
+      - name: Validate (schema, immutability, download, sha256, install + smoke test)
+        run: >
+          safe-agents-manager --home "$RUNNER_TEMP/home"
+          validate-registry registry.json --base "$RUNNER_TEMP/base.json" --install

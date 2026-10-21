@@ -32,6 +32,10 @@ class InstallRequest(BaseModel):
     sha256: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{64}$")
 
 
+class RegistryInstallRequest(BaseModel):
+    version: str | None = Field(default=None, pattern=r"^\d+\.\d+\.\d+$")
+
+
 def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
@@ -81,6 +85,18 @@ def create_app(manager: AgentManager, token: str) -> FastAPI:
     def install(body: InstallRequest) -> dict[str, Any]:
         job = manager.submit_install(FsPath(body.archive_path), expected_sha256=body.sha256)
         return job.to_dict()
+
+    @router.get("/registry")
+    def registry(refresh: bool = False) -> dict[str, Any]:
+        catalog, rows = manager.catalog(refresh=refresh)
+        return {"agents": rows, "fetched_at": catalog.fetched_at, "stale": catalog.stale}
+
+    @router.post("/registry/{agent_id}/install", status_code=status.HTTP_202_ACCEPTED)
+    def install_from_registry(
+        agent_id: AgentId, body: RegistryInstallRequest | None = None
+    ) -> dict[str, Any]:
+        version = body.version if body else None
+        return manager.submit_registry_install(agent_id, version).to_dict()
 
     @router.get("/jobs/{job_id}")
     def get_job(job_id: str) -> dict[str, Any]:

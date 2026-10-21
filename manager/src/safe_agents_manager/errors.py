@@ -51,3 +51,23 @@ class AgentStartError(ManagerError):
 class NoFreePortError(ManagerError):
     code = "no_free_port"
     http_status = 503
+
+
+class RegistryError(ManagerError):
+    code = "invalid_registry"
+    http_status = 502
+
+
+class RegistryUnavailableError(ManagerError):
+    code = "registry_unavailable"
+    http_status = 503
+
+
+class DownloadError(ManagerError):
+    code = "download_failed"
+    http_status = 502
+
+
+class UnsafeUrlError(ManagerError):
+    code = "unsafe_url"
+    http_status = 422

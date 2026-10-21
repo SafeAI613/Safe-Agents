@@ -2,9 +2,9 @@ name: manager
 
 on:
   push:
-    paths: ["manager/**", "schemas/**", "examples/**", ".github/workflows/manager.yml"]
+    paths: ["manager/**", "schemas/**", "examples/**", "registry-template/**", ".github/workflows/manager.yml"]
   pull_request:
-    paths: ["manager/**", "schemas/**", "examples/**", ".github/workflows/manager.yml"]
+    paths: ["manager/**", "schemas/**", "examples/**", "registry-template/**", ".github/workflows/manager.yml"]
 
 jobs:
   checks:
@@ -25,6 +25,8 @@ jobs:
       - run: uv run ruff check src tests
       - run: uv run ruff format --check src tests
       - run: uv run mypy
+      - name: Registry template is valid
+        run: uv run safe-agents-manager validate-registry ../registry-template/registry.json
       - name: Unit tests
         run: uv run pytest
       - name: Integration test (real uv + langgraph dev)

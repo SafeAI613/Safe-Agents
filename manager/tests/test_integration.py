@@ -73,3 +73,27 @@ def test_install_run_interrupt_and_resume(real_manager: AgentManager, tmp_path: 
     assert real_manager.stop(agent.id)
     real_manager.uninstall(agent.id)
     assert not (real_manager.settings.agents_dir / agent.id).exists()
+
+
+def test_registry_validation_with_real_install(tmp_path: Path) -> None:
+    import hashlib
+    import json
+
+    from conftest import CODELOAD_URL, MANIFEST_URL, FakeGitHub, registry_doc, registry_entry
+
+    from safe_agents_manager.registry_validate import RegistryValidator, real_install_check
+
+    if shutil.which(str(find_uv())) is None:
+        pytest.skip("uv is not installed")
+    archive = zip_example(tmp_path / "foo-agent.zip").read_bytes()
+    github = FakeGitHub()
+    github.add(CODELOAD_URL, 200, archive)
+    github.add(MANIFEST_URL, 200, (EXAMPLE_AGENT / "manifest.json").read_bytes())
+    entry = registry_entry(hashlib.sha256(archive).hexdigest())
+    registry = tmp_path / "registry.json"
+    registry.write_text(json.dumps(registry_doc([entry])))
+
+    settings = Settings(home=tmp_path / "home", uv_path=find_uv(), startup_timeout_s=180)
+    with github.client() as client:
+        validator = RegistryValidator(settings, client, real_install_check(settings))
+        assert validator.validate(registry, deep=True) == []

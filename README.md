@@ -8,5 +8,6 @@
 
 | תיקייה | תוכן | שלב |
 |---|---|---|
-| [`manager/`](manager/) | Agent Manager – התקנה והרצה של אייג'נטים (CLI + API מקומי) | M1 ✅ |
+| [`manager/`](manager/) | Agent Manager – קטלוג, התקנה והרצה של אייג'נטים (CLI + API מקומי) | M1 ✅ · M2 ✅ |
+| [`registry-template/`](registry-template/) | תבנית לריפו הקטלוג: `registry.json` + CI ולידציה | M2 ✅ |
 | [`examples/foo-agent/`](examples/foo-agent/) | אייג'נט דוגמה לפי החוזה, כולל HITL | M0 ✅ |

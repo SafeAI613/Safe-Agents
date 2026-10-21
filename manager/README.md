@@ -1,16 +1,19 @@
-# Safe-Agents Manager (M1)
+# Safe-Agents Manager (M1 + M2)
 
 תהליך Python ללא ממשק (headless) שמתקין, מריץ ומנהל אייג'נטים של LangGraph.
 בהמשך (M3) אפליקציית ה-Desktop (Tauri) תריץ אותו כ-sidecar ותדבר איתו דרך ה-API המקומי.
 
 ## מה הוא עושה
 
-1. **התקנה** מקובץ zip: אימות sha256 → חילוץ בטוח → בדיקת `manifest.json` → יצירת סביבת Python
+1. **קטלוג (M2)**: קריאת `registry.json` מהקטלוג המרכזי עם מטמון ETag (עובד גם offline),
+   הורדה מאובטחת (https בלבד, רשימת hosts מותרים של GitHub, מגבלת גודל, אימות sha256),
+   וזיהוי עדכונים זמינים.
+2. **התקנה** מקובץ zip: אימות sha256 → חילוץ בטוח → בדיקת `manifest.json` → יצירת סביבת Python
    מבודדת עם `uv` → יצירת `langgraph.json` → בדיקת הפעלה (smoke test) → רישום ב-SQLite.
    כל כשל מבטל את ההתקנה ומוחק את כל מה שנוצר.
-2. **הרצה**: שרת `langgraph dev` נפרד לכל אייג'נט, על פורט פנוי מהטווח 2100–2199,
+3. **הרצה**: שרת `langgraph dev` נפרד לכל אייג'נט, על פורט פנוי מהטווח 2100–2199,
    קשור ל-`127.0.0.1` בלבד, עם סביבה מינימלית ורק המפתחות שהאייג'נט הצהיר עליהם.
-3. **API מקומי** (FastAPI) עם Bearer token, כולל סטרימינג של התקדמות ההתקנה (SSE).
+4. **API מקומי** (FastAPI) עם Bearer token, כולל סטרימינג של התקדמות ההתקנה (SSE).
 
 ## דרישות
 
@@ -22,11 +25,16 @@
 cd manager
 uv sync
 
-uv run safe-agents-manager install ../path/to/agent.zip [--sha256 <hex>]
+uv run safe-agents-manager catalog [--refresh]                 # מה יש בקטלוג
+uv run safe-agents-manager install foo_agent [--version 1.0.0]  # התקנה/עדכון מהקטלוג
+uv run safe-agents-manager install ../path/to/agent.zip [--sha256 <hex>]  # מקובץ מקומי
 uv run safe-agents-manager list
 OPENROUTER_API_KEY=... uv run safe-agents-manager run foo_agent   # Ctrl+C לעצירה
 uv run safe-agents-manager uninstall foo_agent
 SAFE_AGENTS_TOKEN=... uv run safe-agents-manager serve --port 0
+
+# בדיקת registry.json (ה-CI של ריפו הקטלוג מריץ את זה על כל PR)
+uv run safe-agents-manager validate-registry registry.json --base base.json --install
 ```
 
 `serve` מדפיס שורת JSON אחת כשהוא מוכן: `{"event": "ready", "port": 54321}`
@@ -37,6 +45,7 @@ SAFE_AGENTS_TOKEN=... uv run safe-agents-manager serve --port 0
 | `SAFE_AGENTS_HOME` | תיקיית הנתונים (ברירת מחדל: תיקיית הנתונים של מערכת ההפעלה) |
 | `SAFE_AGENTS_UV` | נתיב ל-uv (ברירת מחדל: ליד קובץ ההפעלה, ואז PATH) |
 | `SAFE_AGENTS_TOKEN` | הטוקן שה-API דורש |
+| `SAFE_AGENTS_REGISTRY_URL` | כתובת הקטלוג (https), או נתיב לקובץ מקומי בזמן פיתוח |
 | `OPENROUTER_API_KEY` וכו' | ב-M1 מפתחות נקראים מהסביבה; ב-M3 יגיעו מה-keychain |
 
 ## API
@@ -46,6 +55,8 @@ SAFE_AGENTS_TOKEN=... uv run safe-agents-manager serve --port 0
 | GET | `/health` | ללא טוקן |
 | GET | `/agents` · `/agents/{id}` | רשימה / פרטים + סטטוס + url |
 | POST | `/agents/install` | `{"archive_path", "sha256"?}` ← 202 + job |
+| GET | `/registry?refresh=false` | הקטלוג + `installed_version` + `update_available` + `stale` |
+| POST | `/registry/{id}/install` | `{"version"?}` ← 202 + job (התקנה או עדכון) |
 | GET | `/jobs/{id}` · `/jobs/{id}/events` | סטטוס / SSE (`progress`, `done`) |
 | POST | `/agents/{id}/start` · `/stop` | הפעלה (← `url`, `graph_id`) / עצירה |
 | GET | `/agents/{id}/logs?tail=200` | סוף הלוג |
@@ -66,6 +77,9 @@ uv run pytest -m integration    # uv + langgraph dev אמיתיים עם example
 
 | מודול | אחריות |
 |---|---|
+| `registry.py` | פענוח ואימות הקטלוג, לקוח עם מטמון ETag ו-fallback offline |
+| `download.py` | הורדת https עם רשימת hosts, בדיקת כל redirect, מגבלת גודל, sha256 |
+| `registry_validate.py` | בדיקת שינוי בקטלוג ל-CI (immutability, הורדה, השוואת מניפסטים, התקנה) |
 | `archive.py` | sha256, חילוץ zip בטוח (Zip-Slip, symlinks, zip bomb, דילוג על `.env`) |
 | `manifest.py` | טעינה ואימות מול JSON Schema |
 | `layout.py` | מבנה תיקיית אייג'נט ויצירת `langgraph.json` |

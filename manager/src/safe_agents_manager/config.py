@@ -11,6 +11,18 @@ from pathlib import Path
 from platformdirs import user_data_dir
 
 APP_NAME = "SafeAgents"
+DEFAULT_REGISTRY_URL = (
+    "https://raw.githubusercontent.com/SafeAI613/safe-agents-registry/main/registry.json"
+)
+# Agents and the catalog are published on GitHub; downloads from anywhere else are refused.
+DEFAULT_ALLOWED_HOSTS = frozenset(
+    {
+        "github.com",
+        "raw.githubusercontent.com",
+        "objects.githubusercontent.com",
+        "release-assets.githubusercontent.com",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -23,6 +35,11 @@ class Settings:
     max_archive_bytes: int = 100 * 1024 * 1024
     max_extracted_bytes: int = 300 * 1024 * 1024
     max_archive_files: int = 10_000
+    # An https URL, or a local file path (handy while developing a catalog).
+    registry_url: str = DEFAULT_REGISTRY_URL
+    registry_cache_ttl_s: float = 300.0
+    allowed_hosts: frozenset[str] = DEFAULT_ALLOWED_HOSTS
+    http_timeout_s: float = 30.0
 
     @property
     def agents_dir(self) -> Path:
@@ -35,6 +52,14 @@ class Settings:
     @property
     def cache_dir(self) -> Path:
         return self.home / "cache" / "uv"
+
+    @property
+    def registry_cache_dir(self) -> Path:
+        return self.home / "cache" / "registry"
+
+    @property
+    def downloads_dir(self) -> Path:
+        return self.home / "downloads"
 
     @property
     def logs_dir(self) -> Path:
@@ -50,6 +75,8 @@ class Settings:
             self.python_dir,
             self.cache_dir,
             self.logs_dir,
+            self.registry_cache_dir,
+            self.downloads_dir,
             self.db_path.parent,
         ):
             path.mkdir(parents=True, exist_ok=True)
@@ -58,7 +85,8 @@ class Settings:
     def from_env(cls) -> Settings:
         """Build settings from ``SAFE_AGENTS_HOME`` / ``SAFE_AGENTS_UV`` or platform defaults."""
         home = Path(os.environ.get("SAFE_AGENTS_HOME") or user_data_dir(APP_NAME, appauthor=False))
-        return cls(home=home, uv_path=find_uv())
+        registry_url = os.environ.get("SAFE_AGENTS_REGISTRY_URL") or DEFAULT_REGISTRY_URL
+        return cls(home=home, uv_path=find_uv(), registry_url=registry_url)
 
 
 def find_uv() -> Path:

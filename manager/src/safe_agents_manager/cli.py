@@ -30,11 +30,29 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-v", "--verbose", action="store_true", help="show detailed output")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    install = sub.add_parser("install", help="install an agent from a local zip archive")
-    install.add_argument("archive", type=Path)
-    install.add_argument("--sha256", help="expected sha256 of the archive")
+    install = sub.add_parser(
+        "install", help="install an agent from the catalog (by id) or from a local zip archive"
+    )
+    install.add_argument("source", help="catalog agent id, or path to a .zip archive")
+    install.add_argument(
+        "--version", dest="agent_version", help="catalog version (default: latest)"
+    )
+    install.add_argument("--sha256", help="expected sha256 of a local archive")
 
     sub.add_parser("list", help="list installed agents")
+
+    catalog = sub.add_parser("catalog", help="list agents available in the catalog")
+    catalog.add_argument("--refresh", action="store_true", help="skip the local cache")
+
+    validate = sub.add_parser(
+        "validate-registry", help="validate a registry.json change (used by the catalog CI)"
+    )
+    validate.add_argument("registry", type=Path)
+    validate.add_argument("--base", type=Path, help="registry.json of the target branch")
+    validate.add_argument("--deep", action="store_true", help="download and check new versions")
+    validate.add_argument(
+        "--install", action="store_true", help="also install new versions (implies --deep)"
+    )
 
     uninstall = sub.add_parser("uninstall", help="remove an installed agent")
     uninstall.add_argument("agent_id")
@@ -53,6 +71,56 @@ def _print_event(event: InstallEvent, verbose: bool) -> None:
     prefix = "  " if event.detail else f"[{event.step.value}] "
     stream = sys.stderr if event.step is InstallStep.FAILED else sys.stdout
     print(f"{prefix}{event.message}", file=stream, flush=True)
+
+
+def _install(manager: AgentManager, args: argparse.Namespace) -> None:
+    def on_event(event: InstallEvent) -> None:
+        _print_event(event, args.verbose)
+
+    source = Path(args.source)
+    if source.suffix.lower() == ".zip" or source.is_file():
+        if args.agent_version:
+            raise SystemExit("--version applies only to catalog installs")
+        agent = manager.install_archive(
+            source.resolve(), expected_sha256=args.sha256, on_event=on_event
+        )
+    else:
+        if args.sha256:
+            raise SystemExit("--sha256 applies only to local archives")
+        agent = manager.install_from_registry(args.source, args.agent_version, on_event=on_event)
+    print(f"installed {agent.id} {agent.version} -> {agent.install_dir}")
+
+
+def _catalog(manager: AgentManager, refresh: bool) -> None:
+    catalog, rows = manager.catalog(refresh=refresh)
+    if catalog.stale:
+        print("(offline: showing the last cached catalog)", file=sys.stderr)
+    if not rows:
+        print("the catalog is empty")
+    for row in rows:
+        installed = row["installed_version"] or "-"
+        mark = " (update available)" if row["update_available"] else ""
+        print(f"{row['id']:<24} {row['latest']:<10} installed: {installed:<10} {row['name']}{mark}")
+
+
+def _validate_registry(settings: Settings, args: argparse.Namespace) -> int:
+    import httpx
+
+    from .registry_validate import RegistryValidator, real_install_check
+
+    with httpx.Client(timeout=settings.http_timeout_s) as client:
+        validator = RegistryValidator(
+            settings, client, real_install_check(settings) if args.install else None
+        )
+        findings = validator.validate(args.registry, base=args.base, deep=args.deep or args.install)
+    github = os.environ.get("GITHUB_ACTIONS") == "true"
+    for finding in findings:
+        # GitHub Actions turns ::error lines into annotations on the PR.
+        print(f"::error title=registry::{finding}" if github else f"error: {finding}")
+    if findings:
+        return 1
+    print("registry is valid")
+    return 0
 
 
 def _free_port() -> int:
@@ -99,7 +167,7 @@ def _run_foreground(manager: AgentManager, agent_id: str) -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        manager.shutdown()
+        manager.supervisor.stop_all()
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -112,15 +180,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.home:
         settings = dataclasses.replace(settings, home=args.home)
 
+    if args.command == "validate-registry":
+        return _validate_registry(settings, args)
+
+    manager: AgentManager | None = None
     try:
         manager = AgentManager(settings, EnvSecretProvider())
         if args.command == "install":
-            agent = manager.install_archive(
-                args.archive.resolve(),
-                expected_sha256=args.sha256,
-                on_event=lambda event: _print_event(event, args.verbose),
-            )
-            print(f"installed {agent.id} {agent.version} -> {agent.install_dir}")
+            _install(manager, args)
+        elif args.command == "catalog":
+            _catalog(manager, args.refresh)
         elif args.command == "list":
             agents = manager.list_agents()
             if not agents:
@@ -139,6 +208,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     except KeyboardInterrupt:
         return 130
+    finally:
+        if manager is not None:
+            manager.shutdown()
     return 0
 
 

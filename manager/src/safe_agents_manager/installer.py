@@ -32,6 +32,7 @@ STAGING_PREFIX = ".staging-"
 
 
 class InstallStep(StrEnum):
+    DOWNLOADING = "downloading"
     VERIFYING = "verifying"
     EXTRACTING = "extracting"
     VALIDATING = "validating"

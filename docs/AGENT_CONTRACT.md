@@ -34,7 +34,7 @@ my-llm-agent/
 | `graph_id` | כן | מזהה ייחודי, `snake_case`, משמש כ-`assistantId` |
 | `graph_entry` | כן | `נתיב/לקובץ.py:שם_משתנה`, לדוגמה `agent/graph.py:graph` |
 | `python` | כן | טווח גרסאות, לדוגמה `>=3.11,<3.13` |
-| `source_url` | כן | קישור ל-zip של tag (לא ענף!) |
+| `source_url` | כן | קישור לקובץ zip שהועלה כ-**Release asset** (ראו סעיף 4) |
 | `input_schema` | כן | כרגע רק `messages` |
 | `accepts_files` | לא | סיומות קבצים נתמכות |
 | `hitl` | לא | `true` אם הגרף משתמש ב-`interrupt()` |
@@ -89,7 +89,26 @@ if not decision.get("approved"):
 אין צורך לחשב עלויות באייג'נט. הפלטפורמה מחשבת מ-`usage_metadata` של הודעות ה-AI ומטבלת התמחור של OpenRouter.
 
 ## 4. פרסום בקטלוג
-1. יצירת tag (למשל `v1.0.0`) בריפו של האייג'נט.
-2. חישוב `sha256` של ה-zip של ה-tag (ה-hash נכתב ב-`registry.json` בלבד – לא במניפסט, כי המניפסט נמצא בתוך ה-zip עצמו).
-3. פתיחת PR לריפו הקטלוג עם רשומה חדשה ב-`registry.json`.
-4. ה-CI מאמת את המניפסט, ה-hash, ההתקנה וטעינת הגרף. מנהל מאשר merge.
+
+### למה Release asset ולא "Download ZIP"
+קבצי ה-zip ש-GitHub מייצר אוטומטית מ-tag (`archive/refs/tags/...`) **אינם מובטחים להישאר זהים ברמת הבייט**, ולכן ה-sha256 שלהם עלול להשתנות ולשבור את ההתקנה. קובץ שהועלה ל-Release הוא קובץ קבוע. לכן הפלטפורמה מורידה רק מ-Releases (הורדה מ-`codeload.github.com` נחסמת).
+
+### שלבים
+1. **אריזה** – zip של תיקיית האייג'נט (בלי `.venv`, `__pycache__`, `.env`):
+   ```bash
+   git archive --format=zip --prefix=foo-agent/ -o foo-agent.zip v1.0.0
+   ```
+2. **Release** – יצירת Release בשם התג (`v1.0.0`) והעלאת `foo-agent.zip` כ-asset.
+   הקישור: `https://github.com/<user>/<repo>/releases/download/v1.0.0/foo-agent.zip` – זה ה-`source_url` במניפסט.
+3. **Hash** – חישוב sha256 של הקובץ שהועלה:
+   - Linux/macOS: `sha256sum foo-agent.zip`
+   - Windows (PowerShell): `(Get-FileHash foo-agent.zip -Algorithm SHA256).Hash.ToLower()`
+
+   ה-hash נכתב **רק** ב-`registry.json` – לא במניפסט, כי המניפסט נמצא בתוך ה-zip עצמו.
+4. **PR לקטלוג** – הוספת רשומה ל-`registry.json` בריפו הקטלוג (ראו README של הקטלוג).
+   `manifest_url` מצביע על המניפסט בתג: `https://raw.githubusercontent.com/<user>/<repo>/v1.0.0/manifest.json`.
+5. **CI** – בודק סכמה, שה-hash תואם, שהמניפסט בתוך ה-zip זהה ל-`manifest_url` ולרשומה בקטלוג, ומתקין את האייג'נט בפועל (כולל טעינת הגרף). מנהל מאשר merge.
+
+### כללים
+- **גרסה שפורסמה לא משתנה לעולם.** תיקון = גרסה חדשה (`1.0.1`). ה-CI חוסם שינוי של גרסה קיימת.
+- `name`, `description` ו-`version` ברשומה חייבים להיות זהים למניפסט.

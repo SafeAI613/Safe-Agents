@@ -71,7 +71,7 @@ SafeAgents/
   "graph_entry": "agent/graph.py:graph",
   "graph_id": "foo_agent",
   "python": ">=3.11,<3.13",
-  "source_url": "https://github.com/foo/bar/archive/refs/tags/v1.0.0.zip",
+  "source_url": "https://github.com/foo/bar/releases/download/v1.0.0/foo-agent.zip",
   "input_schema": "messages",
   "accepts_files": [".pdf", ".txt"],
   "hitl": true,
@@ -92,11 +92,11 @@ SafeAgents/
 ---
 
 ## 3. קטלוג מרכזי (ריפו `safe-agents-registry`)
-- `registry.json`: מערך רשומות `{id, name, latest, versions:[{version, manifest_url, source_url, sha256}]}`.
-- מפתח מוסיף אייג'נט ב-PR. **GitHub Action** מאמת: JSON Schema של המניפסט, הורדת ה-zip והשוואת sha256, קיום `graph_entry`, `uv pip install` יבש, סריקת secrets, `python -c "import …"` לטעינת הגרף.
-- מנהל מאשר merge. האפליקציה מושכת `registry.json` גולמי (raw) + ETag cache.
-
----
+- `registry.json`: מערך רשומות `{id, name, description, creator_name?, latest, versions:[{version, manifest_url, source_url, sha256}]}` (סכמה: `schemas/registry.schema.json`).
+- **קבצי האייג'נט הם Release assets** – לא ה-zip ש-GitHub מייצר מ-tag, שאינו מובטח להישאר זהה ברמת הבייט.
+- מפתח מוסיף אייג'נט ב-PR. ה-CI (`safe-agents-manager validate-registry --install`) בודק: סכמה; שגרסה שפורסמה לא השתנתה (immutability); הורדה + sha256; שהמניפסט בתוך ה-zip זהה ל-`manifest_url` ולרשומה; התקנה מלאה + smoke test. רץ על `pull_request` עם הרשאות קריאה בלבד וללא secrets.
+- מנהל מאשר merge (CODEOWNERS + branch protection). האפליקציה מושכת את `registry.json` (raw) עם ETag cache; כשאין רשת – מוצג העותק האחרון (`stale`).
+- הורדות מותרות רק ב-https ורק מ-hosts של GitHub (`github.com`, `raw.githubusercontent.com`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com`); כל redirect נבדק.
 
 ## 4. תהליכים מרכזיים
 

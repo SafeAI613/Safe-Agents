@@ -3,34 +3,83 @@
   "$id": "https://github.com/SafeAI613/Safe-Agents/schemas/registry.schema.json",
   "title": "Safe-Agents registry",
   "type": "object",
-  "required": ["registry_version", "agents"],
+  "required": [
+    "registry_version",
+    "agents"
+  ],
   "properties": {
-    "registry_version": { "const": 1 },
+    "registry_version": {
+      "const": 1
+    },
     "agents": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "name", "latest", "versions"],
+        "required": [
+          "id",
+          "name",
+          "description",
+          "latest",
+          "versions"
+        ],
         "properties": {
-          "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]{2,63}$" },
-          "name": { "type": "string" },
-          "latest": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{2,63}$"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Must equal the manifest description (checked by CI)"
+          },
+          "creator_name": {
+            "type": "string"
+          },
+          "latest": {
+            "type": "string",
+            "pattern": "^\\d+\\.\\d+\\.\\d+$"
+          },
           "versions": {
             "type": "array",
             "minItems": 1,
             "items": {
               "type": "object",
-              "required": ["version", "manifest_url", "source_url", "sha256"],
+              "required": [
+                "version",
+                "manifest_url",
+                "source_url",
+                "sha256"
+              ],
               "properties": {
-                "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
-                "manifest_url": { "type": "string", "format": "uri", "pattern": "^https://" },
-                "source_url": { "type": "string", "format": "uri", "pattern": "^https://" },
-                "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
-              }
+                "version": {
+                  "type": "string",
+                  "pattern": "^\\d+\\.\\d+\\.\\d+$"
+                },
+                "manifest_url": {
+                  "type": "string",
+                  "format": "uri",
+                  "pattern": "^https://"
+                },
+                "source_url": {
+                  "type": "string",
+                  "format": "uri",
+                  "pattern": "^https://"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "additionalProperties": false
             }
           }
-        }
+        },
+        "additionalProperties": false
       }
     }
-  }
+  },
+  "additionalProperties": false
 }
