@@ -71,3 +71,23 @@ class DownloadError(ManagerError):
 class UnsafeUrlError(ManagerError):
     code = "unsafe_url"
     http_status = 422
+
+
+class SecretStoreError(ManagerError):
+    code = "secret_store_unavailable"
+    http_status = 503
+
+
+class InvalidApiKeyError(ManagerError):
+    code = "invalid_api_key"
+    http_status = 422
+
+
+class UpstreamError(ManagerError):
+    code = "upstream_error"
+    http_status = 502
+
+
+class InvalidRequestError(ManagerError):
+    code = "invalid_request"
+    http_status = 422

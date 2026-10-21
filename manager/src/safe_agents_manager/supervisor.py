@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets
 import signal
 import subprocess
 import sys
@@ -19,11 +20,12 @@ import httpx
 
 from .config import Settings
 from .errors import AgentStartError, MissingSecretError
-from .layout import AgentLayout
+from .layout import AGENT_TOKEN_ENV, AGENT_TOKEN_HEADER, AgentLayout, write_langgraph_config
 from .manifest import AgentManifest
 from .ports import PortAllocator
 from .secret_store import SecretProvider
 from .store import InstalledAgent
+from .winjob import assign_to_kill_on_close_job
 
 log = logging.getLogger(__name__)
 
@@ -79,6 +81,7 @@ def build_agent_env(
     secrets: SecretProvider,
     *,
     strict: bool,
+    agent_id: str | None = None,
     base_environ: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
     base = os.environ if base_environ is None else base_environ
@@ -95,15 +98,22 @@ def build_agent_env(
     )
     missing: list[str] = []
     for key in manifest.required_env:
-        value = secrets.get(key)
+        value = secrets.get(key, agent_id)
         if value:
             env[key] = value
         else:
             missing.append(key)
     for key in manifest.optional_env:
-        value = secrets.get(key)
+        value = secrets.get(key, agent_id)
         if value:
             env[key] = value
+    # Tracing is a platform feature: once the user sets a LangSmith key every agent reports
+    # to its own project, whether or not the agent declared the key.
+    langsmith_key = secrets.get("LANGSMITH_API_KEY")
+    if langsmith_key:
+        env["LANGSMITH_API_KEY"] = langsmith_key
+        env["LANGSMITH_TRACING"] = "true"
+        env["LANGSMITH_PROJECT"] = f"safe-agents-{manifest.agent_id}"
     if missing and strict:
         raise MissingSecretError(f"missing required secrets: {', '.join(missing)}")
     return env
@@ -159,6 +169,9 @@ class AgentProcess:
     port: int
     process: subprocess.Popen[bytes]
     log_path: Path
+    # Clients must send it in the x-api-key header; see layout.PLATFORM_AUTH_SOURCE.
+    token: str
+    last_activity: float = field(default_factory=time.monotonic)
     started_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
 
     @property
@@ -168,6 +181,10 @@ class AgentProcess:
     @property
     def alive(self) -> bool:
         return self.process.poll() is None
+
+    @property
+    def auth_headers(self) -> dict[str, str]:
+        return {AGENT_TOKEN_HEADER: self.token}
 
 
 class Supervisor:
@@ -223,6 +240,25 @@ class Supervisor:
             self._shutdown(handle)
             return True
 
+    def touch(self, agent_id: str) -> bool:
+        """Record that the agent is in use (called by the UI's heartbeat)."""
+        handle = self.get(agent_id)
+        if handle is not None:
+            handle.last_activity = time.monotonic()
+        return handle is not None
+
+    def stop_idle(self, max_idle_s: float) -> list[str]:
+        with self._lock:
+            handles = list(self._running.values())
+        now = time.monotonic()
+        stopped = []
+        for handle in handles:
+            if now - handle.last_activity > max_idle_s:
+                log.info("stopping %s after %.0fs without use", handle.agent_id, max_idle_s)
+                self.stop(handle.agent_id)
+                stopped.append(handle.agent_id)
+        return stopped
+
     def stop_all(self) -> None:
         with self._lock:
             agent_ids = list(self._running)
@@ -236,6 +272,7 @@ class Supervisor:
             response = httpx.post(
                 f"{handle.url}/assistants/search",
                 json={"graph_id": manifest.graph_id, "limit": 1},
+                headers=handle.auth_headers,
                 timeout=10,
             )
             response.raise_for_status()
@@ -251,7 +288,12 @@ class Supervisor:
     def _launch(
         self, name: str, layout: AgentLayout, manifest: AgentManifest, *, strict: bool
     ) -> AgentProcess:
-        env = build_agent_env(manifest, self._secrets, strict=strict)
+        env = build_agent_env(manifest, self._secrets, strict=strict, agent_id=manifest.agent_id)
+        token = secrets.token_urlsafe(32)
+        env[AGENT_TOKEN_ENV] = token
+        env["CORS_ALLOW_ORIGINS"] = ",".join(self._settings.cors_origins)
+        # Regenerate on every start so agents installed by an older version get current auth.
+        write_langgraph_config(layout, manifest)
         port = self._ports.allocate()
         self._settings.logs_dir.mkdir(parents=True, exist_ok=True)
         log_path = self._settings.logs_dir / f"{name}.log"
@@ -274,8 +316,9 @@ class Supervisor:
         except OSError as exc:
             self._ports.release(port)
             raise AgentStartError(f"could not start agent server: {exc}") from exc
+        assign_to_kill_on_close_job(process)
 
-        handle = AgentProcess(name, manifest.graph_id, port, process, log_path)
+        handle = AgentProcess(name, manifest.graph_id, port, process, log_path, token)
         try:
             self._wait_healthy(handle)
         except BaseException:

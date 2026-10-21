@@ -12,7 +12,18 @@ from contextlib import asynccontextmanager
 from pathlib import Path as FsPath
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Path, Query, Request, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    FastAPI,
+    HTTPException,
+    Path,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
@@ -20,6 +31,7 @@ from pydantic import BaseModel, Field
 from . import __version__
 from .errors import ManagerError
 from .service import AgentManager
+from .usage import UsageItem
 
 AGENT_ID_PATTERN = r"^[a-z][a-z0-9_]{2,63}$"
 AgentId = Annotated[str, Path(pattern=AGENT_ID_PATTERN)]
@@ -34,6 +46,32 @@ class InstallRequest(BaseModel):
 
 class RegistryInstallRequest(BaseModel):
     version: str | None = Field(default=None, pattern=r"^\d+\.\d+\.\d+$")
+
+
+class SecretValue(BaseModel):
+    value: str = Field(max_length=4096)
+
+
+class AgentSecretsRequest(BaseModel):
+    values: dict[str, str]
+
+
+class UsageItemModel(BaseModel):
+    message_id: str = Field(min_length=1, max_length=200)
+    model: str = Field(min_length=1, max_length=200)
+    input_tokens: int = Field(ge=0)
+    output_tokens: int = Field(ge=0)
+
+
+class UsageRequest(BaseModel):
+    agent_id: str = Field(pattern=AGENT_ID_PATTERN)
+    thread_id: str = Field(min_length=1, max_length=200)
+    items: list[UsageItemModel] = Field(max_length=500)
+
+
+class ExportRequest(BaseModel):
+    filename: str = Field(min_length=1, max_length=200)
+    content: str
 
 
 def _sse(event: str, data: dict[str, Any]) -> str:
@@ -59,6 +97,13 @@ def create_app(manager: AgentManager, token: str) -> FastAPI:
         manager.shutdown()  # never leave agent servers running after the manager exits
 
     app = FastAPI(title="Safe-Agents Manager", version=__version__, lifespan=lifespan)
+    # Only the desktop webview may call the API from a browser context.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(manager.settings.cors_origins),
+        allow_methods=["GET", "POST", "PUT", "DELETE"],
+        allow_headers=["authorization", "content-type"],
+    )
 
     @app.exception_handler(ManagerError)
     async def handle_manager_error(_request: Request, exc: ManagerError) -> JSONResponse:
@@ -143,6 +188,7 @@ def create_app(manager: AgentManager, token: str) -> FastAPI:
             "graph_id": handle.graph_id,
             "url": handle.url,
             "port": handle.port,
+            "token": handle.token,
             "started_at": handle.started_at,
         }
 
@@ -157,6 +203,72 @@ def create_app(manager: AgentManager, token: str) -> FastAPI:
     @router.get("/agents/{agent_id}/logs")
     def logs(agent_id: AgentId, tail: Annotated[int, Query(ge=1, le=2000)] = 200) -> dict[str, Any]:
         return {"agent_id": agent_id, "lines": manager.logs(agent_id, tail)}
+
+    @router.post("/agents/{agent_id}/heartbeat")
+    def heartbeat(agent_id: AgentId) -> dict[str, Any]:
+        return {"agent_id": agent_id, "running": manager.heartbeat(agent_id)}
+
+    @router.get("/agents/{agent_id}/readme")
+    def readme(agent_id: AgentId) -> dict[str, Any]:
+        return {"agent_id": agent_id, "readme": manager.readme(agent_id)}
+
+    @router.post("/agents/{agent_id}/files", status_code=status.HTTP_201_CREATED)
+    def upload(agent_id: AgentId, file: UploadFile) -> dict[str, Any]:
+        path = manager.upload(agent_id, file.filename or "file", file.file)
+        return {"path": str(path), "name": path.name, "size": path.stat().st_size}
+
+    @router.get("/agents/{agent_id}/secrets")
+    def agent_secrets(agent_id: AgentId) -> list[dict[str, Any]]:
+        return manager.agent_secrets(agent_id)
+
+    @router.put("/agents/{agent_id}/secrets", status_code=status.HTTP_204_NO_CONTENT)
+    def set_agent_secrets(agent_id: AgentId, body: AgentSecretsRequest) -> None:
+        manager.set_agent_secrets(agent_id, body.values)
+
+    @router.get("/settings")
+    def get_settings() -> dict[str, Any]:
+        return manager.settings_status()
+
+    @router.put("/settings/openrouter-key")
+    def set_openrouter_key(body: SecretValue) -> dict[str, Any]:
+        return manager.set_openrouter_key(body.value)
+
+    @router.get("/settings/openrouter-key/status")
+    def openrouter_status() -> dict[str, Any]:
+        return manager.openrouter_status()
+
+    @router.delete("/settings/openrouter-key", status_code=status.HTTP_204_NO_CONTENT)
+    def delete_openrouter_key() -> None:
+        manager.set_global_secret("OPENROUTER_API_KEY", "")
+
+    @router.put("/settings/langsmith-key", status_code=status.HTTP_204_NO_CONTENT)
+    def set_langsmith_key(body: SecretValue) -> None:
+        manager.set_global_secret("LANGSMITH_API_KEY", body.value)
+
+    @router.delete("/settings/langsmith-key", status_code=status.HTTP_204_NO_CONTENT)
+    def delete_langsmith_key() -> None:
+        manager.set_global_secret("LANGSMITH_API_KEY", "")
+
+    @router.get("/models/pricing")
+    def pricing(refresh: bool = False) -> dict[str, Any]:
+        return {"prices": manager.pricing(refresh=refresh)}
+
+    @router.post("/usage")
+    def record_usage(body: UsageRequest) -> dict[str, Any]:
+        items = [UsageItem(**item.model_dump()) for item in body.items]
+        recorded = manager.record_usage(body.agent_id, body.thread_id, items)
+        return {"recorded": recorded, **manager.usage.summary(body.agent_id, body.thread_id)}
+
+    @router.get("/usage")
+    def usage(
+        agent_id: Annotated[str | None, Query(pattern=AGENT_ID_PATTERN)] = None,
+        thread_id: str | None = None,
+    ) -> dict[str, Any]:
+        return manager.usage.summary(agent_id, thread_id)
+
+    @router.post("/exports", status_code=status.HTTP_201_CREATED)
+    def export(body: ExportRequest) -> dict[str, Any]:
+        return {"path": str(manager.export(body.filename, body.content))}
 
     app.include_router(router)
     return app

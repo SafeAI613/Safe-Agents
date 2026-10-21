@@ -34,9 +34,13 @@ def test_langgraph_config_points_into_src(tmp_path: Path) -> None:
         "dependencies": ["./src"],
         "graphs": {"foo_agent": "./src/agent/graph.py:graph"},
         "env": {},
+        "auth": {"path": "./platform_auth.py:auth"},
     }
     path = write_langgraph_config(AgentLayout(tmp_path), parsed)
     assert json.loads(path.read_text())["graphs"]["foo_agent"]
+    auth_source = AgentLayout(tmp_path).platform_auth.read_text()
+    assert "SAFE_AGENTS_AGENT_TOKEN" in auth_source and "compare_digest" in auth_source
+    compile(auth_source, "platform_auth.py", "exec")
 
 
 def test_store_roundtrip_and_upsert(tmp_path: Path) -> None:

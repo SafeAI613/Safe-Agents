@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 from uuid import uuid4
 
 import httpx
@@ -18,16 +19,21 @@ from .errors import (
     AgentNotFoundError,
     ArchiveError,
     DownloadError,
+    InvalidRequestError,
     ManagerError,
+    SecretStoreError,
 )
+from .files import read_readme, save_upload, write_export
 from .fsutil import remove_tree
 from .installer import EventSink, Installer, InstallEvent, InstallStep, SmokeTester
 from .jobs import Job, JobRunner
+from .openrouter import OpenRouterClient, Pricing
 from .ports import PortAllocator
 from .registry import Catalog, RegistryClient, parse_version
-from .secret_store import SecretProvider
+from .secret_store import GLOBAL_KEYS, SecretProvider, SecretStore
 from .store import AgentStore, InstalledAgent
 from .supervisor import AgentProcess, CommandFactory, Supervisor, langgraph_dev_command, tail_lines
+from .usage import UsageItem, UsageStore
 
 log = logging.getLogger(__name__)
 
@@ -42,9 +48,11 @@ class AgentManager:
         command_factory: CommandFactory = langgraph_dev_command,
         smoke_test: SmokeTester | None = None,
         http_client: httpx.Client | None = None,
+        openrouter: OpenRouterClient | None = None,
     ) -> None:
         settings.ensure_dirs()
         self.settings = settings
+        self.secrets = secrets
         self.http = http_client or httpx.Client(
             timeout=settings.http_timeout_s,
             headers={"User-Agent": f"safe-agents-manager/{__version__}"},
@@ -57,6 +65,9 @@ class AgentManager:
             settings.registry_cache_ttl_s,
         )
         self.store = AgentStore(settings.db_path)
+        self.usage = UsageStore(settings.db_path)
+        self.openrouter = openrouter or OpenRouterClient(self.http, settings.home / "cache")
+        self._stop_background = threading.Event()
         self.supervisor = Supervisor(
             settings, PortAllocator(*settings.port_range), secrets, command_factory
         )
@@ -85,6 +96,19 @@ class AgentManager:
         handle = self.supervisor.get(agent.id)
         info["status"] = "running" if handle else "stopped"
         info["url"] = handle.url if handle else None
+        info["token"] = handle.token if handle else None
+        manifest = agent.manifest.raw
+        info["examples"] = manifest.get("examples_of_suitable_questions", [])
+        info["tasks"] = manifest.get("tasks_capable_of_performing", [])
+        info["permissions"] = manifest.get("technical_specifications", {}).get(
+            "required_permissions", []
+        )
+        info["models"] = agent.manifest.supported_models
+        info["default_model"] = agent.manifest.runtime["default_model"]
+        info["mcp_servers"] = [s["name"] for s in agent.manifest.runtime.get("mcp_servers", [])]
+        info["missing_secrets"] = [
+            key for key in agent.manifest.required_env if not self.secrets.get(key, agent.id)
+        ]
         return info
 
     def list_agents(self) -> list[dict[str, Any]]:
@@ -206,10 +230,16 @@ class AgentManager:
         return self.jobs.submit("install", work)
 
     def uninstall(self, agent_id: str) -> None:
-        self.get_agent(agent_id)
+        agent = self.get_agent(agent_id)
         self.supervisor.stop(agent_id)
         self.store.delete(agent_id)
         remove_tree(self.settings.agents_dir / agent_id)
+        if isinstance(self.secrets, SecretStore):
+            keys = [field["key"] for field in agent.manifest.secret_fields()]
+            try:
+                self.secrets.delete_agent(agent_id, keys)
+            except SecretStoreError as exc:
+                log.warning("could not remove secrets of %s: %s", agent_id, exc)
 
     def start(self, agent_id: str) -> AgentProcess:
         return self.supervisor.start(self.get_agent(agent_id))
@@ -218,7 +248,117 @@ class AgentManager:
         self.get_agent(agent_id)
         return self.supervisor.stop(agent_id)
 
+    def heartbeat(self, agent_id: str) -> bool:
+        self.get_agent(agent_id)
+        return self.supervisor.touch(agent_id)
+
+    # -- settings and secrets ---------------------------------------------------------------
+
+    def _writable_secrets(self) -> SecretStore:
+        if not isinstance(self.secrets, SecretStore):
+            raise SecretStoreError("secrets are read-only in this mode")
+        return self.secrets
+
+    def settings_status(self) -> dict[str, Any]:
+        return {
+            "openrouter_key_set": bool(self.secrets.get("OPENROUTER_API_KEY")),
+            "langsmith_key_set": bool(self.secrets.get("LANGSMITH_API_KEY")),
+            "idle_timeout_s": self.settings.idle_timeout_s,
+            "exports_dir": str(self.settings.exports_dir),
+        }
+
+    def set_openrouter_key(self, value: str) -> dict[str, Any]:
+        value = value.strip()
+        info = self.openrouter.key_info(value)  # raises InvalidApiKeyError before storing
+        self._writable_secrets().set("OPENROUTER_API_KEY", value)
+        return info
+
+    def openrouter_status(self) -> dict[str, Any]:
+        key = self.secrets.get("OPENROUTER_API_KEY")
+        if not key:
+            raise InvalidRequestError("no OpenRouter key is set")
+        return self.openrouter.key_info(key)
+
+    def set_global_secret(self, key: str, value: str) -> None:
+        if key not in GLOBAL_KEYS:
+            raise InvalidRequestError(f"'{key}' is not a global setting")
+        store = self._writable_secrets()
+        if value.strip():
+            store.set(key, value.strip())
+        else:
+            store.delete(key)
+
+    def agent_secrets(self, agent_id: str) -> list[dict[str, Any]]:
+        agent = self.get_agent(agent_id)
+        fields = []
+        for field in agent.manifest.secret_fields():
+            key = field["key"]
+            scope = "global" if key in GLOBAL_KEYS else "agent"
+            fields.append({**field, "scope": scope, "set": bool(self.secrets.get(key, agent_id))})
+        return fields
+
+    def set_agent_secrets(self, agent_id: str, values: dict[str, str]) -> None:
+        agent = self.get_agent(agent_id)
+        declared = {f["key"] for f in agent.manifest.secret_fields()} - GLOBAL_KEYS
+        unknown = set(values) - declared
+        if unknown:
+            raise InvalidRequestError(f"not declared by the agent: {', '.join(sorted(unknown))}")
+        store = self._writable_secrets()
+        for key, value in values.items():
+            if value.strip():
+                store.set(key, value.strip(), agent_id)
+            else:
+                store.delete(key, agent_id)
+
+    # -- files ------------------------------------------------------------------------------
+
+    def upload(self, agent_id: str, filename: str, stream: BinaryIO) -> Path:
+        agent = self.get_agent(agent_id)
+        return save_upload(
+            stream,
+            filename,
+            agent.layout.inbox,
+            allowed_extensions=agent.manifest.runtime.get("accepts_files", []),
+            max_bytes=self.settings.max_upload_bytes,
+        )
+
+    def readme(self, agent_id: str) -> str | None:
+        return read_readme(self.get_agent(agent_id).layout.src)
+
+    def export(self, filename: str, content: str) -> Path:
+        if len(content.encode("utf-8")) > 20 * 1024 * 1024:
+            raise InvalidRequestError("export is too large")
+        return write_export(self.settings.exports_dir, filename, content)
+
+    # -- usage and cost ---------------------------------------------------------------------
+
+    def pricing(self, *, refresh: bool = False) -> Pricing:
+        return self.openrouter.pricing(refresh=refresh)
+
+    def record_usage(self, agent_id: str, thread_id: str, items: list[UsageItem]) -> int:
+        self.get_agent(agent_id)
+        try:
+            pricing = self.pricing()
+        except ManagerError as exc:
+            log.warning("recording usage without prices: %s", exc)
+            pricing = {}
+        return self.usage.record(agent_id, thread_id, items, pricing)
+
+    # -- background work --------------------------------------------------------------------
+
+    def start_background(self, interval_s: float = 30.0) -> None:
+        """Stop agents that nobody used for ``idle_timeout_s`` (desktop mode only)."""
+        if self.settings.idle_timeout_s <= 0:
+            return
+
+        def run() -> None:
+            while not self._stop_background.wait(interval_s):
+                self.supervisor.stop_idle(self.settings.idle_timeout_s)
+
+        threading.Thread(target=run, name="idle-monitor", daemon=True).start()
+
     def shutdown(self) -> None:
+        self._stop_background.set()
         self.supervisor.stop_all()
         self.jobs.shutdown()
         self.http.close()

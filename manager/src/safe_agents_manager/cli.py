@@ -12,6 +12,7 @@ import signal
 import socket
 import sys
 import threading
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -19,7 +20,14 @@ from . import __version__
 from .config import Settings
 from .errors import ManagerError
 from .installer import InstallEvent, InstallStep
-from .secret_store import EnvSecretProvider
+from .secret_store import (
+    EnvSecretProvider,
+    KeyringBackend,
+    MemoryBackend,
+    SecretBackend,
+    SecretProvider,
+    SecretStore,
+)
 from .service import AgentManager
 
 
@@ -62,6 +70,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     serve = sub.add_parser("serve", help="run the local HTTP API for the desktop shell")
     serve.add_argument("--port", type=int, default=0, help="port to bind (0 = pick a free one)")
+    serve.add_argument(
+        "--exit-on-stdin-close",
+        action="store_true",
+        help="stop (and stop all agents) when stdin closes or reads 'shutdown'",
+    )
+    serve.add_argument("--parent-pid", type=int, help="stop when this process exits")
     return parser
 
 
@@ -130,14 +144,25 @@ def _free_port() -> int:
         return port
 
 
-def _serve(manager: AgentManager, port: int) -> None:
+def _desktop_secrets() -> SecretStore:
+    """OS credential store; ``SAFE_AGENTS_SECRETS=memory`` keeps them in RAM (tests, CI)."""
+    backend: SecretBackend
+    if os.environ.get("SAFE_AGENTS_SECRETS") == "memory":
+        backend = MemoryBackend()
+    else:
+        backend = KeyringBackend()
+    return SecretStore(backend, fallback=EnvSecretProvider())
+
+
+def _serve(manager: AgentManager, args: argparse.Namespace) -> None:
     import uvicorn
 
     from .api import create_app
+    from .lifecycle import watch_parent, watch_stdin
 
     # The desktop shell normally generates the token and passes it in; print it otherwise.
     token = os.environ.get("SAFE_AGENTS_TOKEN")
-    ready: dict[str, object] = {"event": "ready", "port": port or _free_port()}
+    ready: dict[str, object] = {"event": "ready", "port": args.port or _free_port()}
     if not token:
         token = secrets.token_urlsafe(32)
         ready["token"] = token
@@ -145,8 +170,26 @@ def _serve(manager: AgentManager, port: int) -> None:
     config = uvicorn.Config(
         app, host="127.0.0.1", port=int(str(ready["port"])), log_level="warning"
     )
-    print(json.dumps(ready), flush=True)
-    uvicorn.Server(config).run()
+    server = uvicorn.Server(config)
+
+    def request_exit() -> None:
+        server.should_exit = True  # uvicorn then runs the lifespan shutdown (stops agents)
+
+    if args.exit_on_stdin_close:
+        watch_stdin(request_exit)
+    if args.parent_pid:
+        watch_parent(args.parent_pid, request_exit)
+
+    def announce_when_listening() -> None:
+        # The shell connects as soon as it reads this line, so only print it once bound.
+        while not server.started and not server.should_exit:
+            time.sleep(0.05)
+        if server.started:
+            print(json.dumps(ready), flush=True)
+
+    manager.start_background()
+    threading.Thread(target=announce_when_listening, name="ready", daemon=True).start()
+    server.run()
 
 
 def _run_foreground(manager: AgentManager, agent_id: str) -> None:
@@ -185,7 +228,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     manager: AgentManager | None = None
     try:
-        manager = AgentManager(settings, EnvSecretProvider())
+        provider: SecretProvider = (
+            _desktop_secrets() if args.command == "serve" else EnvSecretProvider()
+        )
+        manager = AgentManager(settings, provider)
         if args.command == "install":
             _install(manager, args)
         elif args.command == "catalog":
@@ -202,7 +248,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "run":
             _run_foreground(manager, args.agent_id)
         elif args.command == "serve":
-            _serve(manager, args.port)
+            _serve(manager, args)
     except ManagerError as exc:
         print(f"error [{exc.code}]: {exc}", file=sys.stderr)
         return 1

@@ -75,6 +75,29 @@ class AgentManifest:
         required = set(self.required_env)
         return [key for key in dict.fromkeys(keys) if key not in required]
 
+    def secret_fields(self) -> list[dict[str, Any]]:
+        """Every secret the agent can receive, with a label for the settings form."""
+        fields: dict[str, dict[str, Any]] = {}
+        for key in self.required_env:
+            fields[key] = {"key": key, "label": key, "required": True, "source": "env"}
+        for key in self.runtime.get("env_optional", []):
+            fields.setdefault(key, {"key": key, "label": key, "required": False, "source": "env"})
+        for server in self.runtime.get("mcp_servers", []):
+            for item in server.get("auth", []):
+                fields[item["key"]] = {
+                    "key": item["key"],
+                    "label": item["label"],
+                    "required": False,
+                    "source": f"mcp:{server['name']}",
+                }
+        return list(fields.values())
+
+    @property
+    def supported_models(self) -> list[str]:
+        models = [self.runtime["default_model"]]
+        models += self.raw.get("technical_specifications", {}).get("supported_models", [])
+        return list(dict.fromkeys(models))
+
 
 def parse_manifest(data: Any) -> AgentManifest:
     errors = sorted(_validator().iter_errors(data), key=lambda e: list(e.absolute_path))

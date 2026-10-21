@@ -45,7 +45,9 @@ def test_install_run_interrupt_and_resume(real_manager: AgentManager, tmp_path: 
     assert agent.layout.venv_executable("langgraph").is_file()
 
     handle = real_manager.start(agent.id)
-    with httpx.Client(base_url=handle.url, timeout=30) as client:
+    with httpx.Client(base_url=handle.url, timeout=30) as anonymous:
+        assert anonymous.post("/threads", json={}).status_code == 401
+    with httpx.Client(base_url=handle.url, headers=handle.auth_headers, timeout=30) as client:
         thread_id = client.post("/threads", json={}).raise_for_status().json()["thread_id"]
         client.post(
             f"/threads/{thread_id}/runs/wait",

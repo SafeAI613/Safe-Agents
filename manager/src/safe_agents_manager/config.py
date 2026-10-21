@@ -8,7 +8,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from platformdirs import user_data_dir
+from platformdirs import user_data_dir, user_downloads_dir
 
 APP_NAME = "SafeAgents"
 DEFAULT_REGISTRY_URL = (
@@ -23,6 +23,10 @@ DEFAULT_ALLOWED_HOSTS = frozenset(
         "release-assets.githubusercontent.com",
     }
 )
+
+
+# Origins of the Tauri webview (macOS/Linux use tauri://, Windows uses http(s)://tauri.localhost).
+DEFAULT_CORS_ORIGINS = ("tauri://localhost", "http://tauri.localhost", "https://tauri.localhost")
 
 
 @dataclass(frozen=True)
@@ -40,6 +44,16 @@ class Settings:
     registry_cache_ttl_s: float = 300.0
     allowed_hosts: frozenset[str] = DEFAULT_ALLOWED_HOSTS
     http_timeout_s: float = 30.0
+    cors_origins: tuple[str, ...] = DEFAULT_CORS_ORIGINS
+    # Agents nobody has used for this long are stopped to free memory (0 disables).
+    idle_timeout_s: float = 900.0
+    max_upload_bytes: int = 50 * 1024 * 1024
+    # Where "export conversation" writes; None means the user's Downloads folder.
+    export_dir: Path | None = None
+
+    @property
+    def exports_dir(self) -> Path:
+        return self.export_dir or Path(user_downloads_dir())
 
     @property
     def agents_dir(self) -> Path:
@@ -86,7 +100,10 @@ class Settings:
         """Build settings from ``SAFE_AGENTS_HOME`` / ``SAFE_AGENTS_UV`` or platform defaults."""
         home = Path(os.environ.get("SAFE_AGENTS_HOME") or user_data_dir(APP_NAME, appauthor=False))
         registry_url = os.environ.get("SAFE_AGENTS_REGISTRY_URL") or DEFAULT_REGISTRY_URL
-        return cls(home=home, uv_path=find_uv(), registry_url=registry_url)
+        # Extra origins, e.g. the Vite dev server (http://localhost:1420) during development.
+        extra = os.environ.get("SAFE_AGENTS_CORS_ORIGINS", "")
+        origins = DEFAULT_CORS_ORIGINS + tuple(o.strip() for o in extra.split(",") if o.strip())
+        return cls(home=home, uv_path=find_uv(), registry_url=registry_url, cors_origins=origins)
 
 
 def find_uv() -> Path:

@@ -105,11 +105,36 @@ def test_health_timeout(tmp_path: Path, settings: Settings) -> None:
 def test_probe_detects_missing_graph(
     tmp_path: Path, settings: Settings, secrets: StaticSecretProvider
 ) -> None:
-    layout = AgentLayout(tmp_path)
-    layout.langgraph_config.write_text(json.dumps({"graphs": {"other_graph": "x"}}))
-    supervisor = Supervisor(settings, PortAllocator(23310, 23311), secrets, fake_server_command)
+    def without_graphs(layout: AgentLayout, port: int) -> list[str]:
+        return [*fake_server_command(layout, port), "--no-graphs"]
+
+    supervisor = Supervisor(settings, PortAllocator(23310, 23311), secrets, without_graphs)
     with pytest.raises(AgentStartError, match="missing"):
-        supervisor.probe(layout, parse_manifest(manifest()))
+        supervisor.probe(AgentLayout(tmp_path), parse_manifest(manifest()))
+
+
+def test_agent_server_requires_the_launch_token(
+    manager: AgentManager, make_agent_zip: MakeZip
+) -> None:
+    agent = manager.install_archive(make_agent_zip())
+    handle = manager.start(agent.id)
+    search = f"{handle.url}/assistants/search"
+    assert httpx.post(search, json={"graph_id": "foo_agent"}).status_code == 401
+    ok = httpx.post(search, json={"graph_id": "foo_agent"}, headers=handle.auth_headers)
+    assert ok.status_code == 200
+    child_env = json.loads((agent.install_dir / "env.json").read_text())
+    assert child_env["CORS_ALLOW_ORIGINS"] == ",".join(manager.settings.cors_origins)
+    assert "*" not in child_env["CORS_ALLOW_ORIGINS"]
+
+
+def test_idle_agents_are_stopped(manager: AgentManager, make_agent_zip: MakeZip) -> None:
+    agent = manager.install_archive(make_agent_zip())
+    manager.start(agent.id)
+    assert manager.supervisor.stop_idle(max_idle_s=60) == []
+    assert manager.supervisor.touch(agent.id)
+    assert manager.supervisor.stop_idle(max_idle_s=0) == [agent.id]
+    assert manager.supervisor.get(agent.id) is None
+    assert not manager.supervisor.touch(agent.id)
 
 
 def test_unexpected_exit_is_detected(manager: AgentManager, make_agent_zip: MakeZip) -> None:
