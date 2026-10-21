@@ -1,0 +1,8 @@
+node_modules/
+dist/
+playwright-report/
+test-results/
+src-tauri/target/
+src-tauri/binaries/
+src-tauri/gen/
+e2e/.tmp/

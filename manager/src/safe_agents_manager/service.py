@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 from pathlib import Path
@@ -12,7 +13,7 @@ import httpx
 
 from . import __version__
 from .config import Settings
-from .download import download_file
+from .download import download_file, fetch_bytes
 from .envbuilder import EnvBuilder, UvEnvBuilder
 from .errors import (
     AgentAlreadyInstalledError,
@@ -27,6 +28,7 @@ from .files import read_readme, save_upload, write_export
 from .fsutil import remove_tree
 from .installer import EventSink, Installer, InstallEvent, InstallStep, SmokeTester
 from .jobs import Job, JobRunner
+from .manifest import parse_manifest
 from .openrouter import OpenRouterClient, Pricing
 from .ports import PortAllocator
 from .registry import Catalog, RegistryClient, parse_version
@@ -66,7 +68,9 @@ class AgentManager:
         )
         self.store = AgentStore(settings.db_path)
         self.usage = UsageStore(settings.db_path)
-        self.openrouter = openrouter or OpenRouterClient(self.http, settings.home / "cache")
+        self.openrouter = openrouter or OpenRouterClient(
+            self.http, settings.home / "cache", base_url=settings.openrouter_url
+        )
         self._stop_background = threading.Event()
         self.supervisor = Supervisor(
             settings, PortAllocator(*settings.port_range), secrets, command_factory
@@ -128,6 +132,38 @@ class AgentManager:
             )
             rows.append(row)
         return catalog, rows
+
+    def registry_manifest(self, agent_id: str, version: str | None = None) -> dict[str, Any]:
+        """The published manifest, shown before install (permissions, examples, features)."""
+        item = self.registry.fetch().get(agent_id).get_version(version)
+        status, body, _ = fetch_bytes(
+            self.http,
+            item.manifest_url,
+            allowed_hosts=self.settings.allowed_hosts,
+            max_bytes=1024 * 1024,
+        )
+        if status != 200:
+            raise DownloadError(f"manifest download failed with HTTP {status}")
+        try:
+            manifest = parse_manifest(json.loads(body))
+        except ValueError as exc:
+            raise DownloadError(f"manifest is not valid JSON: {exc}") from exc
+        specs = manifest.raw.get("technical_specifications", {})
+        return {
+            "id": agent_id,
+            "version": manifest.version,
+            "name": manifest.name,
+            "description": manifest.raw.get("description"),
+            "creator_name": manifest.raw.get("creator_name"),
+            "contact_information": manifest.raw.get("contact_information"),
+            "repository_url": manifest.raw.get("repository_url"),
+            "examples": manifest.raw.get("examples_of_suitable_questions", []),
+            "tasks": manifest.raw.get("tasks_capable_of_performing", []),
+            "permissions": specs.get("required_permissions", []),
+            "features": specs.get("features_enabled", {}),
+            "models": manifest.supported_models,
+            "secrets": manifest.secret_fields(),
+        }
 
     def logs(self, agent_id: str, tail: int = 200) -> list[str]:
         self.get_agent(agent_id)

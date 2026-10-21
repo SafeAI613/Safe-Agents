@@ -10,11 +10,11 @@ from typing import Any
 
 import httpx
 
+from .config import OPENROUTER_API
 from .errors import InvalidApiKeyError, UpstreamError
 
 log = logging.getLogger(__name__)
 
-OPENROUTER_API = "https://openrouter.ai/api/v1"
 Pricing = dict[str, dict[str, float]]
 
 

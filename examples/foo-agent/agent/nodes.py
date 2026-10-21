@@ -18,9 +18,9 @@ SYSTEM_PROMPT = "You are Foo Agent. Answer briefly. Lorem ipsum dolor sit amet."
 def get_llm(config: RunnableConfig) -> BaseChatModel:
     """Create the LLM inside the node (never at import time), as the contract requires."""
     if os.environ.get("FOO_AGENT_FAKE_LLM") == "1":
-        from langchain_core.language_models import FakeListChatModel
+        from agent.fake_llm import fake_llm
 
-        return FakeListChatModel(responses=["Lorem ipsum dolor sit amet."])
+        return fake_llm(DEFAULT_MODEL)
 
     from langchain_openai import ChatOpenAI
 
@@ -29,6 +29,7 @@ def get_llm(config: RunnableConfig) -> BaseChatModel:
         model=model,
         api_key=os.environ["OPENROUTER_API_KEY"],
         base_url="https://openrouter.ai/api/v1",
+        stream_usage=True,  # token counts for the platform's cost display
     )
 
 

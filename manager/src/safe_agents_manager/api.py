@@ -136,6 +136,10 @@ def create_app(manager: AgentManager, token: str) -> FastAPI:
         catalog, rows = manager.catalog(refresh=refresh)
         return {"agents": rows, "fetched_at": catalog.fetched_at, "stale": catalog.stale}
 
+    @router.get("/registry/{agent_id}/manifest")
+    def registry_manifest(agent_id: AgentId, version: str | None = None) -> dict[str, Any]:
+        return manager.registry_manifest(agent_id, version)
+
     @router.post("/registry/{agent_id}/install", status_code=status.HTTP_202_ACCEPTED)
     def install_from_registry(
         agent_id: AgentId, body: RegistryInstallRequest | None = None

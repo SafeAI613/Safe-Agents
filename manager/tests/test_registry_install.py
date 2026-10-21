@@ -156,3 +156,12 @@ def test_disk_error_during_download(
     with pytest.raises(DownloadError, match="No space left"):
         registry_manager.install_from_registry("foo_agent", on_event=events.append)
     assert events[-1].step is InstallStep.FAILED
+
+
+def test_api_registry_manifest_preview(client: TestClient, github: FakeGitHub) -> None:
+    preview = client.get("/registry/foo_agent/manifest", headers=AUTH).json()
+    assert preview["version"] == "1.0.0"
+    assert preview["permissions"] == []
+    assert preview["secrets"][0]["key"] == "OPENROUTER_API_KEY"
+    github.add(MANIFEST_URL, 200, b"{not json")
+    assert client.get("/registry/foo_agent/manifest", headers=AUTH).status_code == 502

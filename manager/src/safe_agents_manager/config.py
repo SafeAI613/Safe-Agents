@@ -11,6 +11,7 @@ from pathlib import Path
 from platformdirs import user_data_dir, user_downloads_dir
 
 APP_NAME = "SafeAgents"
+OPENROUTER_API = "https://openrouter.ai/api/v1"
 DEFAULT_REGISTRY_URL = (
     "https://raw.githubusercontent.com/SafeAI613/safe-agents-registry/main/registry.json"
 )
@@ -48,6 +49,8 @@ class Settings:
     # Agents nobody has used for this long are stopped to free memory (0 disables).
     idle_timeout_s: float = 900.0
     max_upload_bytes: int = 50 * 1024 * 1024
+    # Overridable for end-to-end tests, which use a local fake OpenRouter.
+    openrouter_url: str = OPENROUTER_API
     # Where "export conversation" writes; None means the user's Downloads folder.
     export_dir: Path | None = None
 
@@ -103,7 +106,15 @@ class Settings:
         # Extra origins, e.g. the Vite dev server (http://localhost:1420) during development.
         extra = os.environ.get("SAFE_AGENTS_CORS_ORIGINS", "")
         origins = DEFAULT_CORS_ORIGINS + tuple(o.strip() for o in extra.split(",") if o.strip())
-        return cls(home=home, uv_path=find_uv(), registry_url=registry_url, cors_origins=origins)
+        export_dir = os.environ.get("SAFE_AGENTS_EXPORT_DIR")
+        return cls(
+            home=home,
+            uv_path=find_uv(),
+            registry_url=registry_url,
+            cors_origins=origins,
+            openrouter_url=os.environ.get("SAFE_AGENTS_OPENROUTER_URL") or OPENROUTER_API,
+            export_dir=Path(export_dir) if export_dir else None,
+        )
 
 
 def find_uv() -> Path:

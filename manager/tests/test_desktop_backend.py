@@ -215,7 +215,7 @@ def test_upload_rejections(client: TestClient, desktop: AgentManager) -> None:
 def test_agent_without_files_refuses_uploads(
     desktop: AgentManager, make_agent_zip: MakeZip
 ) -> None:
-    desktop.install_archive(make_agent_zip(manifest(graph_id="bar_agent")))
+    desktop.install_archive(make_agent_zip(manifest(graph_id="bar_agent", accepts_files=[])))
     with pytest.raises(InvalidRequestError, match="does not accept files"):
         desktop.upload("bar_agent", "a.txt", io.BytesIO(b"x"))
 

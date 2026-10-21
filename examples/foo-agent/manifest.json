@@ -24,6 +24,7 @@
     "python": ">=3.11,<3.13",
     "source_url": "https://github.com/foo/foo-agent/releases/download/v1.0.0/foo-agent.zip",
     "input_schema": "messages",
+    "accepts_files": [".txt"],
     "hitl": true,
     "env_optional": ["FOO_AGENT_FAKE_LLM"],
     "default_model": "meta-llama/llama-3.1-70b-instruct"

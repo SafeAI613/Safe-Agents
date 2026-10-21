@@ -87,6 +87,7 @@ if not decision.get("approved"):
 
 ### עלויות
 אין צורך לחשב עלויות באייג'נט. הפלטפורמה מחשבת מ-`usage_metadata` של הודעות ה-AI ומטבלת התמחור של OpenRouter.
+כדי שהמודל יחזיר את מספר הטוקנים גם בסטרימינג, יש ליצור את הלקוח עם `stream_usage=True` (ראו `examples/foo-agent/agent/nodes.py`).
 
 ## 4. פרסום בקטלוג
 
