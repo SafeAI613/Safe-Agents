@@ -152,3 +152,40 @@ def test_uninstall_stops_and_removes(manager: AgentManager, make_agent_zip: Make
     assert handle.process.poll() is not None
     assert not (manager.settings.agents_dir / agent.id).exists()
     assert manager.list_agents() == []
+
+
+def test_next_manager_stops_agents_of_a_killed_one(
+    settings: Settings, secrets: StaticSecretProvider, make_agent_zip: MakeZip
+) -> None:
+    def with_root(layout: AgentLayout, port: int) -> list[str]:
+        # Like the real command, the command line names the agent's folder.
+        return [*fake_server_command(layout, port), "--config", str(layout.langgraph_config)]
+
+    crashed = AgentManager(
+        settings, secrets, env_builder=FakeEnvBuilder(), command_factory=with_root
+    )
+    agent = crashed.install_archive(make_agent_zip())
+    process = crashed.start(agent.id).process
+    # No shutdown(): the manager "dies" and its agent keeps running.
+    successor = AgentManager(settings, secrets, env_builder=FakeEnvBuilder())
+    try:
+        assert process.wait(timeout=10) is not None
+    finally:
+        successor.shutdown()
+
+
+def test_reaper_ignores_unrelated_processes(tmp_path: Path) -> None:
+    import subprocess
+
+    from safe_agents_manager.orphans import PidRegistry
+
+    unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        registry = PidRegistry(tmp_path / "agents.json")
+        registry.add("foo_agent", unrelated.pid, tmp_path / "agents" / "foo_agent")
+        assert registry.reap() == []
+        assert unrelated.poll() is None
+        assert registry.reap() == [], "the registry is cleared after reaping"
+    finally:
+        unrelated.kill()
+        unrelated.wait()

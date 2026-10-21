@@ -30,6 +30,8 @@ export default defineConfig({
       timeout: 600_000,
       reuseExistingServer: false,
       stdout: "pipe",
+      // Let the manager stop its agent servers instead of being killed outright.
+      gracefulShutdown: { signal: "SIGTERM", timeout: 20_000 },
     },
     {
       command: "npm run dev",

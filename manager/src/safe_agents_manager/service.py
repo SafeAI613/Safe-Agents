@@ -83,6 +83,9 @@ class AgentManager:
             is_running=lambda agent_id: self.supervisor.get(agent_id) is not None,
         )
         self.jobs = JobRunner()
+        orphans = self.supervisor.reap_orphans()
+        if orphans:
+            log.warning("stopped %d agent servers left over from a previous run", len(orphans))
         removed = self.installer.cleanup_orphans()
         if removed:
             log.info("removed %d leftover folders from interrupted installs", len(removed))

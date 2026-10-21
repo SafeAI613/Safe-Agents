@@ -284,7 +284,7 @@ function ChatSession({ agent, started }: { agent: InstalledAgent; started: Start
         <div className="row">
           {agent.accepts_files.length > 0 && (
             <label className="file-pick">
-              צירוף קובץ ({agent.accepts_files.join(", ")})
+              צירוף קובץ (<bdi dir="ltr">{agent.accepts_files.join(", ")}</bdi>)
               <input
                 type="file"
                 multiple
@@ -321,7 +321,7 @@ function HelpPanel({ agent, onPick }: { agent: InstalledAgent; onPick: (text: st
   const readme = useAsync(() => api.readme(agent.id), [api, agent.id]);
   return (
     <aside className="help card" aria-label="עזרה">
-      <p>{agent.description}</p>
+      <p dir="auto">{agent.description}</p>
       {agent.tasks.length > 0 && (
         <>
           <h3>מה האייג'נט יודע לעשות</h3>

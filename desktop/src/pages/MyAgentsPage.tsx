@@ -59,7 +59,7 @@ export function MyAgentsPage({
                 {agent.status === "running" ? "פועל" : "כבוי"}
               </span>
             </h2>
-            <p>{agent.description}</p>
+            <p dir="auto">{agent.description}</p>
             <p className="muted">
               גרסה <bdi>{agent.version}</bdi>
             </p>

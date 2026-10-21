@@ -22,6 +22,7 @@ from .config import Settings
 from .errors import AgentStartError, MissingSecretError
 from .layout import AGENT_TOKEN_ENV, AGENT_TOKEN_HEADER, AgentLayout, write_langgraph_config
 from .manifest import AgentManifest
+from .orphans import PidRegistry
 from .ports import PortAllocator
 from .secret_store import SecretProvider
 from .store import InstalledAgent
@@ -194,8 +195,10 @@ class Supervisor:
         ports: PortAllocator,
         secrets: SecretProvider,
         command_factory: CommandFactory = langgraph_dev_command,
+        pids: PidRegistry | None = None,
     ) -> None:
         self._settings = settings
+        self._pids = pids or PidRegistry(settings.home / "runtime" / "agents.json")
         self._ports = ports
         self._secrets = secrets
         self._command_factory = command_factory
@@ -317,6 +320,7 @@ class Supervisor:
             self._ports.release(port)
             raise AgentStartError(f"could not start agent server: {exc}") from exc
         assign_to_kill_on_close_job(process)
+        self._pids.add(name, process.pid, layout.root)
 
         handle = AgentProcess(name, manifest.graph_id, port, process, log_path, token)
         try:
@@ -347,7 +351,11 @@ class Supervisor:
         _terminate_tree(handle.process, self._settings.stop_timeout_s)
         self._forget(handle)
 
+    def reap_orphans(self) -> list[int]:
+        return self._pids.reap()
+
     def _forget(self, handle: AgentProcess) -> None:
+        self._pids.remove(handle.agent_id)
         with self._lock:
             if self._running.get(handle.agent_id) is handle:
                 del self._running[handle.agent_id]

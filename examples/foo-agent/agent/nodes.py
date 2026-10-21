@@ -44,7 +44,7 @@ def approve(state: MessagesState) -> dict[str, Any]:
         {
             "type": "approval",
             "action": "publish_answer",
-            "details": {"answer": state["messages"][-1].content},
+            "details": {"answer": state["messages"][-1].text},
         }
     )
     text = "Approved." if decision.get("approved") else "Rejected by the user."

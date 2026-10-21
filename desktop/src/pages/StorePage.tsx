@@ -37,7 +37,7 @@ export function StorePage({ onOpenAgents }: { onOpenAgents: () => void }) {
         {catalog.data?.agents.map((agent) => (
           <article key={agent.id} className="card" data-testid={`catalog-${agent.id}`}>
             <h2>{agent.name}</h2>
-            <p>{agent.description}</p>
+            <p dir="auto">{agent.description}</p>
             <p className="muted">
               {agent.creator_name && <>מאת {agent.creator_name} · </>}
               גרסה <bdi>{agent.latest}</bdi>
@@ -157,7 +157,7 @@ function PreviewDetails({ preview }: { preview: ManifestPreview }) {
   const features = Object.entries(preview.features).filter(([, on]) => on);
   return (
     <div className="stack">
-      {preview.description && <p>{preview.description}</p>}
+      {preview.description && <p dir="auto">{preview.description}</p>}
       <p className="muted">
         מפתח/ת: {preview.creator_name ?? "לא צוין"}
         {preview.contact_information && (
