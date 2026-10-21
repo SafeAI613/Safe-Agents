@@ -28,7 +28,7 @@
 │        │ HTTP (localhost, token)          │ HTTP/SSE            │
 │        ▼                                   ▼                    │
 │  Rust core (Tauri)                    langgraph dev :2101       │
-│   ├─ keychain (מפתחות)                 langgraph dev :2102 ...  │
+│   ├─ token + סטטוס ל-UI                langgraph dev :2102 ...  │
 │   └─ spawn/kill sidecar                   ▲                     │
 │        ▼                                  │ spawn per agent      │
 │  Agent Manager (Python FastAPI sidecar, PyInstaller) ───────────┘
@@ -41,7 +41,7 @@
   GitHub: registry.json + releases           openrouter.ai / LangSmith
 ```
 
-**עקרון:** Rust מינימלי (חלון, keychain, הרמת sidecar). כל הלוגיקה ב-Python (Agent Manager) – שפה מוכרת לסטודנטים, ו-`uv` קל לשליטה ממנה.
+**עקרון:** Rust מינימלי (חלון, הרמת sidecar, token). המפתחות נשמרים ב-OS keychain דרך ספריית `keyring` של Python בתוך ה-Manager. כל הלוגיקה ב-Python (Agent Manager) – שפה מוכרת לסטודנטים, ו-`uv` קל לשליטה ממנה.
 
 ### תיקיות נתונים במחשב המשתמש (`%APPDATA%/SafeAgents` / `~/.local/share/SafeAgents`)
 ```
@@ -103,7 +103,7 @@ SafeAgents/
 ### 4.1 Bootstrap (הפעלה ראשונה)
 1. Tauri מרים את ה-sidecar (Agent Manager) על פורט אקראי + token אקראי (מועבר ל-UI בלבד).
 2. Manager בודק `runtime/python`; אם חסר – `uv python install 3.12 --install-dir …` עם פס התקדמות.
-3. אשף: הזנת מפתח OpenRouter → ולידציה מול `GET /api/v1/key` → שמירה ב-keychain (Rust `keyring`).
+3. אשף: הזנת מפתח OpenRouter → ולידציה מול `GET /api/v1/key` → שמירה ב-keychain (ספריית `keyring` של Python).
 
 ### 4.2 התקנת אייג'נט (state machine)
 `queued → downloading → verifying(sha256) → extracting → validating(manifest) → creating_venv → installing_deps → generating_config → smoke_test → installed` (כל שלב עם rollback לתיקייה זמנית ומחיקה בכשל).
@@ -147,7 +147,7 @@ const stream = useStream({ apiUrl: `http://127.0.0.1:${port}`, assistantId: grap
 | DELETE | `/agents/{id}` | הסרה |
 | POST | `/agents/{id}/start` · `/stop` | ← `{port, graph_id}` |
 | GET | `/agents/{id}/logs?tail=` | לוגים |
-| PUT | `/agents/{id}/secrets` | סודות MCP/אופציונליים (מועבר ל-Rust keychain) |
+| PUT | `/agents/{id}/secrets` | סודות MCP/אופציונליים (נשמרים ב-OS keychain) |
 | POST | `/usage` · GET `/usage?agent=` | רישום ושליפת עלויות |
 | GET | `/models/pricing` | תמחור OpenRouter (cache 24h) |
 
@@ -169,7 +169,7 @@ Safe-Agents/
 ├─ docs/  SPEC.md · AGENT_CONTRACT.md · ARCHITECTURE.md (+ דיאגרמות)
 ├─ schemas/manifest.schema.json · registry.schema.json
 ├─ desktop/            # Tauri 2
-│   ├─ src-tauri/      # Rust: main.rs, sidecar.rs, keychain.rs
+│   ├─ src-tauri/      # Rust: main.rs, lib.rs, manager.rs (sidecar)
 │   └─ src/            # React: pages/Store, MyAgents, Chat, Settings; hooks/useAgent.ts
 ├─ manager/            # Python FastAPI sidecar (uv project)
 │   ├─ app/ api.py · registry.py · installer.py · supervisor.py · ports.py · usage.py · db.py
@@ -189,11 +189,26 @@ Safe-Agents/
 | M0 | מסמכים וחוזים | `SPEC.md`, `AGENT_CONTRACT.md`, JSON Schemas, אייג'נט דוגמה |
 | M1 | Manager headless | התקנה מ-zip מקומי, venv, langgraph.json, start/stop, טסטים |
 | M2 | Registry | ריפו קטלוג + CI ולידציה, הורדה + sha256 |
-| M3 | Desktop shell | Tauri + sidecar + keychain + אשף מפתח |
-| M4 | Store + My Agents | התקנה עם פס התקדמות, עדכון, הסרה |
-| M5 | Chat גנרי | useStream, נודים, HITL, קבצים, שגיאות |
-| M6 | עלויות ו-MCP | ledger, פאנל MCP, ייצוא תקציר |
-| M7 | הקשחה והפצה | Job Objects, idle-shutdown, חתימת installer, Release |
+| M3 | Desktop shell | Tauri + sidecar + keychain + אשף מפתח ✅ |
+| M4 | Store + My Agents | התקנה עם פס התקדמות, עדכון, הסרה ✅ |
+| M5 | Chat גנרי | useStream, סטטוס ריצה, HITL, קבצים, שגיאות ✅ |
+| M6 | עלויות ו-MCP | ledger, פאנל MCP, ייצוא שיחה ✅ |
+| M7 | הקשחה והפצה | Job Objects, PID registry, idle-shutdown, sidecar, Release workflow ✅ (חתימת קוד – דורשת תעודה) |
 
 ---
+
+---
+
+## 10. החלטות שהשתנו במהלך המימוש
+
+| נושא | בתכנון | בפועל | למה |
+|---|---|---|---|
+| שמירת מפתחות | Rust `keyring` | Python `keyring` בתוך ה-Manager | כל הלוגיקה במקום אחד; Rust נשאר מינימלי |
+| `sha256` | בתוך `manifest.json` | רק ב-`registry.json` | המניפסט נמצא בתוך ה-zip שה-hash מחושב עליו |
+| מקור ה-zip | "Download ZIP" של tag | Release asset בלבד | ה-zip האוטומטי של GitHub אינו מובטח להישאר זהה ברמת הבייט |
+| אבטחת שרת האייג'נט | localhost בלבד | + token לכל הפעלה (`platform_auth.py`) + CORS מוגבל | ברירת המחדל של `langgraph dev` היא `CORS *` ללא אימות – כל דף אינטרנט יכל להפעיל את האייג'נט |
+| תצוגת "באיזה נוד" | שם הנוד בזמן אמת | סטטוס ריצה: עובד / מנסח תשובה / מפעיל כלי X / ממתין לאישור | בריצות פרוטוקול v2, `langgraph-api 0.16` שולח רק `lifecycle`, `messages`, `values`, `input` (נבדק מול השרת). כשהשרת ישלח `tasks`, אפשר להוסיף שמות נודים |
+| ניקוי תהליכים | Job Object (Windows) | + PID registry (macOS/Linux) + עצירה כש-stdin נסגר או כשהאפליקציה נעלמת | Manager שנהרג ב-SIGKILL לא יכול לנקות; המנהל הבא עוצר את מה שנשאר |
+| טלמטריה | – | `LANGGRAPH_CLI_NO_ANALYTICS=1` | `langgraph dev` שולח נתוני שימוש כברירת מחדל |
+| LangSmith | מפתח לכל אייג'נט | מפתח גלובלי אחד, opt-in, עם הסבר פרטיות | ניטור הוא יכולת פלטפורמה; התוכן נשלח לשירות חיצוני רק בהסכמה |
 

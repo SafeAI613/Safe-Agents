@@ -1,0 +1,83 @@
+name: desktop
+
+on:
+  push:
+    paths: ["desktop/**", "manager/**", "examples/**", ".github/workflows/desktop.yml"]
+  pull_request:
+    paths: ["desktop/**", "manager/**", "examples/**", ".github/workflows/desktop.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux webview dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev libayatana-appindicator3-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build the frontend (embedded by the Rust build)
+        working-directory: desktop
+        run: npm ci && npm run build
+      - working-directory: desktop/src-tauri
+        run: cargo fmt --check
+      - working-directory: desktop/src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+      - working-directory: desktop/src-tauri
+        run: cargo test
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: UI against the real manager and agent server
+        run: npx playwright test
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces
+          path: desktop/test-results
