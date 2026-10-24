@@ -13,6 +13,7 @@ export function InstallProgress({ events }: { events: InstallEvent[] }) {
   const lastIndex = lastStep ? INSTALL_STEPS.indexOf(lastStep) : -1;
   const percent = summary.filter((e) => e.step === "downloading" && e.message.endsWith("%")).at(-1);
   const details = events.filter((event) => event.detail).map((event) => event.message);
+  const working = !installed && !failed && lastStep === "creating_env";
 
   function stateOf(index: number): StepState {
     if (installed || index < lastIndex) return "done";
@@ -32,6 +33,19 @@ export function InstallProgress({ events }: { events: InstallEvent[] }) {
           </li>
         ))}
       </ol>
+      {working && (
+        <p className="muted" aria-live="polite">
+          בהתקנה הראשונה השלב הזה מוריד את Python והספריות ויכול לקחת כמה דקות.
+          {details.length > 0 && (
+            <>
+              <br />
+              <bdi dir="ltr" data-testid="install-activity">
+                {details.at(-1)}
+              </bdi>
+            </>
+          )}
+        </p>
+      )}
       {failed && <p className="banner banner-error">{final.message}</p>}
       {installed && <p className="banner banner-ok">{final.message}</p>}
       {details.length > 0 && (

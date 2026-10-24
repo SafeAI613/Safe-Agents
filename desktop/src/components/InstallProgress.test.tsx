@@ -29,6 +29,21 @@ describe("InstallProgress", () => {
     expect(stateOf("בדיקת הפעלה")).toContain("step-pending");
   });
 
+  it("shows live uv output while the environment is created", () => {
+    render(
+      <InstallProgress
+        events={[
+          event("extracting"),
+          event("creating_env"),
+          event("creating_env", "Downloading cpython-3.12", true),
+          event("creating_env", "Resolved 42 packages", true),
+        ]}
+      />,
+    );
+    expect(screen.getByText(/כמה דקות/)).toBeTruthy();
+    expect(screen.getByTestId("install-activity").textContent).toBe("Resolved 42 packages");
+  });
+
   it("shows the failing step and the error", () => {
     render(
       <InstallProgress
