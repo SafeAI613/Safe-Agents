@@ -99,3 +99,13 @@ def test_registry_validation_with_real_install(tmp_path: Path) -> None:
     with github.client() as client:
         validator = RegistryValidator(settings, client, real_install_check(settings))
         assert validator.validate(registry, deep=True) == []
+
+
+def test_scaffolded_agent_installs_and_loads(tmp_path: Path) -> None:
+    from safe_agents_manager.devtools import install_check, new_agent
+
+    if shutil.which(str(find_uv())) is None:
+        pytest.skip("uv is not installed")
+    directory = new_agent(tmp_path / "scaffold", "scaffold_agent", "Scaffold Agent")
+    settings = Settings(home=tmp_path / "home", uv_path=find_uv(), startup_timeout_s=180)
+    install_check(directory, settings)  # raises if the graph does not load in langgraph dev

@@ -3,6 +3,19 @@
 מסמך זה מגדיר מה אייג'נט חייב לקיים כדי שיהיה ניתן להתקין ולהריץ אותו בפלטפורמת Safe-Agents Desktop.
 המפתח אחראי על הלוגיקה והכלים בלבד. הפלטפורמה אחראית על ההתקנה, הסביבה, השרת והממשק.
 
+## 0. התחלה מהירה (כלי המפתח)
+
+```bash
+uv tool install "safe-agents-manager @ git+https://github.com/SafeAI613/Safe-Agents#subdirectory=manager"
+
+safe-agents-manager new-agent my-agent --id my_agent --name "My Agent"   # שלד לפי החוזה, כולל CLI עם HITL
+safe-agents-manager check my-agent             # בדיקת מניפסט, מבנה, מפתחות שנשכחו בקוד
+safe-agents-manager check my-agent --install   # + התקנה אמיתית והפעלת השרת פעם אחת
+safe-agents-manager package my-agent           # zip נקי וזהה בכל הרצה + sha256 + רשומה לקטלוג
+```
+
+השלד כולל `agent/cli.py` שמדפיס `[INFO] Entering Node: ...` ומבקש אישור `[Y/N]` – בסיס למסלול ה-CLI של הקורס.
+
 ## 1. מבנה תיקיות חובה
 
 ```

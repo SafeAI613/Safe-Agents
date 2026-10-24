@@ -1,0 +1,32 @@
+{
+  "name": "__AGENT_NAME__",
+  "version": "0.1.0",
+  "description": "Lorem ipsum dolor sit amet.",
+  "creator_name": "Lorem Ipsum",
+  "contact_information": "lorem@example.com",
+  "release_date": "__TODAY__",
+  "repository_url": "https://github.com/OWNER/__AGENT_ID__",
+  "download_url": "https://github.com/OWNER/__AGENT_ID__/releases/download/v0.1.0/__AGENT_ID__.zip",
+  "target_audience": "Lorem ipsum",
+  "professional_fields": ["Lorem ipsum"],
+  "tasks_capable_of_performing": ["Lorem ipsum dolor sit amet"],
+  "examples_of_suitable_questions": ["Lorem ipsum dolor sit amet?"],
+  "technical_specifications": {
+    "framework": "LangGraph",
+    "llm_provider": "OpenRouter",
+    "supported_models": ["meta-llama/llama-3.1-70b-instruct"],
+    "features_enabled": { "rag": false, "web_search": false, "code_execution": false, "mcp_support": false },
+    "required_permissions": []
+  },
+  "runtime": {
+    "manifest_version": 1,
+    "graph_id": "__AGENT_ID__",
+    "graph_entry": "agent/graph.py:graph",
+    "python": ">=3.11,<3.13",
+    "source_url": "https://github.com/OWNER/__AGENT_ID__/releases/download/v0.1.0/__AGENT_ID__.zip",
+    "input_schema": "messages",
+    "hitl": true,
+    "env_optional": ["LANGSMITH_API_KEY"],
+    "default_model": "meta-llama/llama-3.1-70b-instruct"
+  }
+}

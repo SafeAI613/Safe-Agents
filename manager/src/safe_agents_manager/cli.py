@@ -68,6 +68,21 @@ def _build_parser() -> argparse.ArgumentParser:
     run = sub.add_parser("run", help="start an agent server and keep it running until Ctrl+C")
     run.add_argument("agent_id")
 
+    new = sub.add_parser("new-agent", help="create a new agent folder from the template")
+    new.add_argument("directory", type=Path)
+    new.add_argument("--id", dest="agent_id", required=True, help="snake_case agent id")
+    new.add_argument("--name", required=True, help="display name")
+
+    check = sub.add_parser("check", help="check an agent folder before publishing")
+    check.add_argument("directory", type=Path)
+    check.add_argument(
+        "--install", action="store_true", help="also install it with uv and start it once"
+    )
+
+    package = sub.add_parser("package", help="zip an agent for a release and print its entry")
+    package.add_argument("directory", type=Path)
+    package.add_argument("-o", "--output", type=Path, help="zip path (default: dist/<id>.zip)")
+
     serve = sub.add_parser("serve", help="run the local HTTP API for the desktop shell")
     serve.add_argument("--port", type=int, default=0, help="port to bind (0 = pick a free one)")
     serve.add_argument(
@@ -135,6 +150,36 @@ def _validate_registry(settings: Settings, args: argparse.Namespace) -> int:
         return 1
     print("registry is valid")
     return 0
+
+
+def _developer_command(settings: Settings, args: argparse.Namespace) -> int:
+    from .devtools import check_agent, install_check, new_agent, package_agent, registry_entry
+
+    try:
+        if args.command == "new-agent":
+            created = new_agent(args.directory, args.agent_id, args.name)
+            print(f"created {created}. Next: edit manifest.json, then `safe-agents-manager check`.")
+            return 0
+        manifest, findings = check_agent(args.directory)
+        for finding in findings:
+            print(finding, file=sys.stderr if finding.level == "error" else sys.stdout)
+        if manifest is None or any(f.level == "error" for f in findings):
+            return 1
+        if args.command == "check":
+            if args.install:
+                print("installing in a temporary folder (uv + smoke test)...", flush=True)
+                install_check(args.directory.resolve(), settings)
+            print(f"{manifest.agent_id} {manifest.version} looks good")
+            return 0
+        archive, digest = package_agent(args.directory, args.output)
+        print(f"package: {archive}\nsha256:  {digest}\n")
+        print(f"1. Upload {archive.name} to the GitHub Release v{manifest.version}")
+        print("2. Add this entry to registry.json in the catalog (PR):")
+        print(json.dumps(registry_entry(manifest, digest), indent=2, ensure_ascii=False))
+        return 0
+    except (ValueError, ManagerError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
 
 def _free_port() -> int:
@@ -225,6 +270,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "validate-registry":
         return _validate_registry(settings, args)
+    if args.command in ("new-agent", "check", "package"):
+        return _developer_command(settings, args)
 
     manager: AgentManager | None = None
     try:
