@@ -64,4 +64,4 @@ if __name__ == "__main__":
     httpd = HTTPServer(("127.0.0.1", int(sys.argv[1])), Handler)
     if "--ignore-stdin" not in sys.argv:
         threading.Thread(target=_stop_on_stdin, args=(httpd,), daemon=True).start()
-    httpd.serve_forever()
+    httpd.serve_forever(poll_interval=0.05)
