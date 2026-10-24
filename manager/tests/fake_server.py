@@ -49,6 +49,19 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+def _stop_on_stdin(server: HTTPServer) -> None:
+    # Same protocol as platform_launcher.py: "shutdown" or EOF on stdin stops the server.
+    for line in sys.stdin:
+        if line.strip() == "shutdown":
+            break
+    server.shutdown()
+
+
 if __name__ == "__main__":
+    import threading
+
     Path("env.json").write_text(json.dumps(dict(os.environ)))
-    HTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
+    httpd = HTTPServer(("127.0.0.1", int(sys.argv[1])), Handler)
+    if "--ignore-stdin" not in sys.argv:
+        threading.Thread(target=_stop_on_stdin, args=(httpd,), daemon=True).start()
+    httpd.serve_forever()

@@ -64,7 +64,8 @@ CommandFactory = Callable[[AgentLayout, int], list[str]]
 
 def langgraph_dev_command(layout: AgentLayout, port: int) -> list[str]:
     return [
-        str(layout.venv_executable("langgraph")),
+        str(layout.venv_executable("python")),
+        str(layout.platform_launcher),
         "dev",
         "--host",
         "127.0.0.1",
@@ -132,28 +133,45 @@ def tail_lines(path: Path, max_lines: int, max_bytes: int = 64 * 1024) -> list[s
 
 
 # A separate process group lets us stop the server together with any child it spawned.
+# On Windows, CREATE_NO_WINDOW keeps a console window from opening for every agent: the
+# desktop app has no console for children to share.
 if sys.platform == "win32":
-    _CREATION_FLAGS = subprocess.CREATE_NEW_PROCESS_GROUP
+    _CREATION_FLAGS = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
 else:
     _CREATION_FLAGS = 0
 _NEW_SESSION = sys.platform != "win32"
 
 
+def _ask_to_stop(proc: subprocess.Popen[bytes]) -> None:
+    """Graceful stop through the launcher's stdin; works the same on every platform."""
+    if proc.stdin is None:
+        return
+    with suppress(OSError, ValueError):
+        proc.stdin.write(b"shutdown\n")
+        proc.stdin.flush()
+    with suppress(OSError, ValueError):
+        proc.stdin.close()
+
+
 def _terminate_tree(proc: subprocess.Popen[bytes], timeout_s: float) -> None:
     if proc.poll() is None:
-        if sys.platform == "win32":
-            proc.send_signal(signal.CTRL_BREAK_EVENT)
-        else:
-            with suppress(ProcessLookupError):
-                os.killpg(proc.pid, signal.SIGTERM)
+        _ask_to_stop(proc)
         try:
             proc.wait(timeout=timeout_s)
         except subprocess.TimeoutExpired:
-            log.warning("process %s did not stop in %.0fs, killing it", proc.pid, timeout_s)
+            log.warning("process %s did not stop in %.0fs, terminating it", proc.pid, timeout_s)
+    if proc.poll() is None and sys.platform != "win32":
+        with suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGTERM)
+        with suppress(subprocess.TimeoutExpired):
+            proc.wait(timeout=5)
     if sys.platform == "win32":
         if proc.poll() is None:
             subprocess.run(
-                ["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True, check=False
+                ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                capture_output=True,
+                check=False,
+                creationflags=_CREATION_FLAGS,
             )
     else:
         # Also removes stragglers left in the group after the leader exited.
@@ -310,7 +328,7 @@ class Supervisor:
                     command,
                     cwd=layout.root,  # relative paths in langgraph.json resolve from here
                     env=env,
-                    stdin=subprocess.DEVNULL,
+                    stdin=subprocess.PIPE,  # the launcher's shutdown channel
                     stdout=log_fh,
                     stderr=subprocess.STDOUT,
                     creationflags=_CREATION_FLAGS,

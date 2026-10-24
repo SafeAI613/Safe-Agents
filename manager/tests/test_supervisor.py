@@ -189,3 +189,30 @@ def test_reaper_ignores_unrelated_processes(tmp_path: Path) -> None:
     finally:
         unrelated.kill()
         unrelated.wait()
+
+
+def test_agent_stops_by_itself_when_the_manager_goes_away(
+    manager: AgentManager, make_agent_zip: MakeZip
+) -> None:
+    agent = manager.install_archive(make_agent_zip())
+    process = manager.start(agent.id).process
+    assert process.stdin is not None
+    process.stdin.close()  # what the OS does when the manager process dies
+    assert process.wait(timeout=10) is not None
+
+
+def test_unresponsive_agent_is_still_stopped(
+    settings: Settings, secrets: StaticSecretProvider, make_agent_zip: MakeZip
+) -> None:
+    def stubborn(layout: AgentLayout, port: int) -> list[str]:
+        return [*fake_server_command(layout, port), "--ignore-stdin"]
+
+    quick = Settings(**{**settings.__dict__, "stop_timeout_s": 1.0})
+    mgr = AgentManager(quick, secrets, env_builder=FakeEnvBuilder(), command_factory=stubborn)
+    try:
+        agent = mgr.install_archive(make_agent_zip())
+        process = mgr.start(agent.id).process
+        assert mgr.stop(agent.id)
+        assert process.poll() is not None
+    finally:
+        mgr.shutdown()

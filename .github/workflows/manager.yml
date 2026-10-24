@@ -25,6 +25,8 @@ jobs:
       - run: uv run ruff check src tests
       - run: uv run ruff format --check src tests
       - run: uv run mypy
+      - name: Type-check the Windows and macOS code paths too
+        run: uv run mypy --platform win32 && uv run mypy --platform darwin
       - name: Registry template is valid
         run: uv run safe-agents-manager validate-registry ../registry-template/registry.json
       - name: Unit tests

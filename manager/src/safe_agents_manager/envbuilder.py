@@ -43,6 +43,8 @@ class UvEnvBuilder:
         try:
             proc = subprocess.run(
                 cmd,
+                # No console window per uv call when running under the desktop app.
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 env=self._uv_env(),
                 capture_output=True,
                 text=True,

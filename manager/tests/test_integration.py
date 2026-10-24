@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import time
 import zipfile
 from collections.abc import Iterator
 from pathlib import Path
@@ -73,7 +74,11 @@ def test_install_run_interrupt_and_resume(real_manager: AgentManager, tmp_path: 
         state = client.get(f"/threads/{thread_id}/state").raise_for_status().json()
         assert state["values"]["messages"][-1]["content"] == "Approved."
 
+    started = time.monotonic()
     assert real_manager.stop(agent.id)
+    assert time.monotonic() - started < 8, "graceful stop through the launcher, not a timeout"
+    log_text = (real_manager.settings.logs_dir / f"{agent.id}.log").read_text()
+    assert "Stopping dev persistence flush loop" in log_text, "state was flushed on stop"
 
     # Conversation history survives a restart of the agent server.
     handle = real_manager.start(agent.id)
