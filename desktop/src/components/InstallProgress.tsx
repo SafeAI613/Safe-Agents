@@ -9,8 +9,12 @@ export function InstallProgress({ events }: { events: InstallEvent[] }) {
   const final = summary.at(-1);
   const failed = final?.step === "failed";
   const installed = final?.step === "installed";
+  // A local ZIP install has no download step.
+  const steps = summary.some((event) => event.step === "downloading")
+    ? INSTALL_STEPS
+    : INSTALL_STEPS.filter((step) => step !== "downloading");
   const lastStep = summary.filter((event) => event.step !== "failed").at(-1)?.step;
-  const lastIndex = lastStep ? INSTALL_STEPS.indexOf(lastStep) : -1;
+  const lastIndex = lastStep ? steps.indexOf(lastStep) : -1;
   const percent = summary.filter((e) => e.step === "downloading" && e.message.endsWith("%")).at(-1);
   const details = events.filter((event) => event.detail).map((event) => event.message);
   const working = !installed && !failed && lastStep === "creating_env";
@@ -24,7 +28,7 @@ export function InstallProgress({ events }: { events: InstallEvent[] }) {
   return (
     <div className="install-progress" aria-live="polite">
       <ol className="steps">
-        {INSTALL_STEPS.map((step, index) => (
+        {steps.map((step, index) => (
           <li key={step} className={`step step-${stateOf(index)}`}>
             {STEP_LABELS[step]}
             {step === "downloading" && stateOf(index) === "current" && percent

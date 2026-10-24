@@ -29,6 +29,12 @@ describe("InstallProgress", () => {
     expect(stateOf("בדיקת הפעלה")).toContain("step-pending");
   });
 
+  it("hides the download step for a local ZIP", () => {
+    render(<InstallProgress events={[event("verifying"), event("extracting")]} />);
+    expect(screen.queryByText("הורדה")).toBeNull();
+    expect(stateOf("אימות חתימה")).toContain("step-done");
+  });
+
   it("shows live uv output while the environment is created", () => {
     render(
       <InstallProgress
