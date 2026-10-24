@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
+import sys
 import threading
 from collections import deque
 from collections.abc import Callable
+from contextlib import suppress
 from typing import Protocol
 
 from .config import Settings
@@ -19,6 +22,27 @@ from .manifest import REQUIREMENTS_FILENAME
 LANGGRAPH_CLI_REQUIREMENT = "langgraph-cli[inmem]>=0.4.30,<0.5"
 
 LogFn = Callable[[str], None]
+
+if sys.platform == "win32":
+    _UV_CREATION_FLAGS = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+else:
+    _UV_CREATION_FLAGS = 0
+
+
+def _kill_tree(proc: subprocess.Popen[str]) -> None:
+    """Stop uv and its children; killing only uv could leave the output pipe open."""
+    if sys.platform == "win32":
+        subprocess.run(
+            ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+            capture_output=True,
+            check=False,
+            creationflags=_UV_CREATION_FLAGS,
+        )
+    else:
+        with suppress(ProcessLookupError, PermissionError):
+            os.killpg(proc.pid, signal.SIGKILL)
+    with suppress(OSError):
+        proc.kill()
 
 
 class EnvBuilder(Protocol):
@@ -47,8 +71,10 @@ class UvEnvBuilder:
         try:
             proc = subprocess.Popen(
                 cmd,
-                # No console window per uv call when running under the desktop app.
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                # No console window per uv call when running under the desktop app; its own
+                # process group so a timeout can stop uv together with anything it started.
+                creationflags=_UV_CREATION_FLAGS,
+                start_new_session=sys.platform != "win32",
                 env=self._uv_env(),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
@@ -64,7 +90,7 @@ class UvEnvBuilder:
 
         def on_timeout() -> None:
             timed_out.set()
-            proc.kill()
+            _kill_tree(proc)
 
         timer = threading.Timer(self._timeout_s, on_timeout)
         timer.start()
@@ -79,6 +105,8 @@ class UvEnvBuilder:
             returncode = proc.wait()
         finally:
             timer.cancel()
+            if proc.stdout is not None:
+                proc.stdout.close()
         if timed_out.is_set():
             raise InstallError(f"'uv {args[0]}' timed out after {self._timeout_s:.0f}s")
         if returncode != 0:

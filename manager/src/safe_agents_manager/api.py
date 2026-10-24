@@ -148,7 +148,12 @@ def create_app(manager: AgentManager, token: str) -> FastAPI:
         return manager.submit_registry_install(agent_id, version).to_dict()
 
     @router.post("/agents/install-upload", status_code=status.HTTP_202_ACCEPTED)
-    def install_upload(file: UploadFile) -> dict[str, Any]:
+    def install_upload(request: Request, file: UploadFile) -> dict[str, Any]:
+        # Starlette has already received the body by now; this refuses obviously oversized
+        # uploads early (the manager re-checks the real size while copying).
+        declared = int(request.headers.get("content-length") or 0)
+        if declared > manager.settings.max_archive_bytes + 1024 * 1024:
+            raise HTTPException(status_code=413, detail="the archive is too large")
         return manager.submit_uploaded_install(file.filename or "", file.file).to_dict()
 
     @router.get("/jobs/{job_id}")

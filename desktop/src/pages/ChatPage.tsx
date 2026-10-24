@@ -175,7 +175,10 @@ function ChatSession({ agent, started }: { agent: InstalledAgent; started: Start
       // Show what the earlier conversation cost so far.
       api
         .usage(agent.id, id)
-        .then((summary) => summary.input_tokens > 0 && setUsage(summary))
+        // Ignore a late answer if the user has already moved to another conversation.
+        .then((summary) => {
+          if (latest.current.threadId === id && summary.input_tokens > 0) setUsage(summary);
+        })
         .catch(() => undefined);
     }
   }
@@ -233,6 +236,7 @@ function ChatSession({ agent, started }: { agent: InstalledAgent; started: Start
           client={client}
           threadId={threadId}
           refreshKey={historyVersion}
+          disabled={stream.isLoading}
           onSelect={(id) => (id ? openConversation(id) : newConversation())}
         />
       </div>

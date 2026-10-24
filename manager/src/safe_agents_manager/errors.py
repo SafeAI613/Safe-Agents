@@ -38,6 +38,11 @@ class AgentRunningError(ManagerError):
     http_status = 409
 
 
+class AgentUpdatingError(ManagerError):
+    code = "agent_updating"
+    http_status = 409
+
+
 class MissingSecretError(ManagerError):
     code = "missing_secret"
     http_status = 412

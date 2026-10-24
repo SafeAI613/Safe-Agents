@@ -104,15 +104,22 @@ function InstallDialog({
   const api = useApi();
   const preview = useAsync(() => api.manifestPreview(agent.id), [api, agent.id]);
   const [confirmed, setConfirmed] = useState(false);
+  const [busy, setBusy] = useState(false);
   const start = useCallback(() => api.installFromCatalog(agent.id), [api, agent.id]);
 
   return (
     <Dialog
       title={`${agent.installed_version ? "עדכון" : "התקנת"} ${agent.name}`}
       onClose={onClose}
+      closable={!busy}
     >
       {confirmed ? (
-        <InstallRun start={start} onClose={onClose} onOpenAgents={onOpenAgents} />
+        <InstallRun
+          start={start}
+          onClose={onClose}
+          onOpenAgents={onOpenAgents}
+          onBusyChange={setBusy}
+        />
       ) : (
         <>
           <ErrorBanner error={preview.error} onRetry={preview.reload} />
@@ -148,12 +155,18 @@ function LocalInstallDialog({
 }) {
   const api = useApi();
   const [confirmed, setConfirmed] = useState(false);
+  const [busy, setBusy] = useState(false);
   const start = useCallback(() => api.installUpload(file), [api, file]);
 
   return (
-    <Dialog title={`התקנה מקובץ: ${file.name}`} onClose={onClose}>
+    <Dialog title={`התקנה מקובץ: ${file.name}`} onClose={onClose} closable={!busy}>
       {confirmed ? (
-        <InstallRun start={start} onClose={onClose} onOpenAgents={onOpenAgents} />
+        <InstallRun
+          start={start}
+          onClose={onClose}
+          onOpenAgents={onOpenAgents}
+          onBusyChange={setBusy}
+        />
       ) : (
         <>
           <p className="banner banner-warn">

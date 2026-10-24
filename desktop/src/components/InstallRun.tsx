@@ -11,15 +11,20 @@ export function InstallRun({
   start,
   onClose,
   onOpenAgents,
+  onBusyChange,
 }: {
   start: () => Promise<Job>;
   onClose: () => void;
   onOpenAgents: () => void;
+  /** Lets the surrounding dialog block closing while the install runs. */
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const api = useApi();
   const [events, setEvents] = useState<InstallEvent[]>([]);
   const [phase, setPhase] = useState<"installing" | "done" | "failed">("installing");
   const [error, setError] = useState<unknown>();
+  useEffect(() => onBusyChange?.(phase === "installing"), [phase, onBusyChange]);
+
   // React StrictMode runs effects twice in development; an install must start only once.
   const started = useRef(false);
 

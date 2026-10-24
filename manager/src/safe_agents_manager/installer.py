@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 import shutil
+import time
 from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -17,7 +19,6 @@ from .config import Settings
 from .envbuilder import EnvBuilder
 from .errors import (
     AgentAlreadyInstalledError,
-    AgentRunningError,
     InstallError,
     ManagerError,
     ManifestError,
@@ -37,6 +38,13 @@ def _remove(path: Path) -> None:
         remove_tree(path)
     else:
         path.unlink(missing_ok=True)
+
+
+Reserve = Callable[[str, "InstalledAgent | None"], AbstractContextManager[None]]
+
+
+def _no_reservation(agent_id: str, previous: InstalledAgent | None) -> AbstractContextManager[None]:
+    return nullcontext()
 
 
 class InstallStep(StrEnum):
@@ -85,13 +93,13 @@ class Installer:
         store: AgentStore,
         env_builder: EnvBuilder,
         smoke_test: SmokeTester,
-        is_running: Callable[[str], bool],
+        reserve: Reserve = _no_reservation,
     ) -> None:
         self._settings = settings
         self._store = store
         self._env_builder = env_builder
         self._smoke_test = smoke_test
-        self._is_running = is_running
+        self._reserve = reserve
 
     def install_archive(
         self,
@@ -110,6 +118,8 @@ class Installer:
         agents_dir.mkdir(parents=True, exist_ok=True)
         staging = agents_dir / f"{STAGING_PREFIX}{uuid4().hex}"
         target: Path | None = None
+        reservation: AbstractContextManager[None] | None = None
+        succeeded = False
         try:
             if expected_sha256:
                 emit(InstallStep.VERIFYING, "verifying sha256 checksum")
@@ -135,8 +145,8 @@ class Installer:
                 raise AgentAlreadyInstalledError(
                     f"{manifest.agent_id} {manifest.version} is already installed"
                 )
-            if self._is_running(manifest.agent_id):
-                raise AgentRunningError(f"stop {manifest.agent_id} before updating it")
+            reservation = self._reserve(manifest.agent_id, previous)
+            reservation.__enter__()
 
             # A venv cannot be moved after creation, so the final folder is used from here on.
             target = agents_dir / manifest.agent_id / manifest.version
@@ -167,9 +177,13 @@ class Installer:
             agent = self._store.save(manifest, target)
             target = None  # committed: nothing to roll back from here on
             if previous is not None and previous.install_dir != agent.install_dir:
-                remove_tree(previous.install_dir)
+                try:
+                    remove_tree(previous.install_dir)
+                except OSError as exc:  # the new version works; cleanup retries next start
+                    log.warning("could not remove %s: %s", previous.install_dir, exc)
 
             emit(InstallStep.INSTALLED, f"{manifest.name} {manifest.version} installed")
+            succeeded = True
             return agent
         except ManagerError as exc:
             emit(InstallStep.FAILED, str(exc))
@@ -184,6 +198,14 @@ class Installer:
                 remove_tree(target)
                 if target.parent.is_dir() and not any(target.parent.iterdir()):
                     target.parent.rmdir()
+            if reservation is not None:
+                # After the rollback, so a restarted old version sees a clean tree. The
+                # reservation must learn about a failure: it restarts the old version then.
+                if succeeded:
+                    reservation.__exit__(None, None, None)
+                else:
+                    failure = InstallError("the install did not complete")
+                    reservation.__exit__(InstallError, failure, None)
 
     @staticmethod
     def _check_expected(manifest: AgentManifest, agent_id: str | None, version: str | None) -> None:
@@ -194,21 +216,40 @@ class Installer:
         if version is not None and manifest.version != version:
             raise ManifestError(f"archive contains version {manifest.version}, expected {version}")
 
-    def cleanup_orphans(self) -> list[Path]:
-        """Remove staging folders, unknown agents, and versions the store does not reference."""
+    def cleanup_orphans(self, min_age_s: float = 3600.0) -> list[Path]:
+        """Remove leftovers of interrupted installs: staging folders, unknown agents, versions
+        the store does not reference, and old uploads/downloads.
+
+        Only items older than ``min_age_s`` are touched: another process (the desktop app
+        while a CLI command runs, or the reverse) may be installing right now.
+        """
+        cutoff = time.time() - min_age_s
+
+        def stale(path: Path) -> bool:
+            try:
+                return path.stat().st_mtime < cutoff
+            except OSError:
+                return False
+
+        removed: list[Path] = []
+        downloads = self._settings.downloads_dir
+        if downloads.is_dir():
+            for item in downloads.iterdir():
+                if stale(item):
+                    _remove(item)
+                    removed.append(item)
         agents_dir = self._settings.agents_dir
         if not agents_dir.is_dir():
-            return []
+            return removed
         installed = {agent.id: agent.install_dir.resolve() for agent in self._store.list()}
-        removed: list[Path] = []
         for entry in agents_dir.iterdir():
             if not entry.is_dir() or entry.name not in installed:
-                _remove(entry)
-                removed.append(entry)
+                if stale(entry):
+                    _remove(entry)
+                    removed.append(entry)
                 continue
             for child in entry.iterdir():
-                if child.resolve() == installed[entry.name]:
-                    continue
-                _remove(child)
-                removed.append(child)
+                if child.resolve() != installed[entry.name] and stale(child):
+                    _remove(child)
+                    removed.append(child)
         return removed

@@ -10,8 +10,8 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable, Mapping
-from contextlib import suppress
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,7 +19,7 @@ from pathlib import Path
 import httpx
 
 from .config import Settings
-from .errors import AgentStartError, MissingSecretError
+from .errors import AgentStartError, AgentUpdatingError, ManagerError, MissingSecretError
 from .layout import AGENT_TOKEN_ENV, AGENT_TOKEN_HEADER, AgentLayout, write_langgraph_config
 from .manifest import AgentManifest
 from .orphans import PidRegistry
@@ -221,6 +221,7 @@ class Supervisor:
         self._secrets = secrets
         self._command_factory = command_factory
         self._running: dict[str, AgentProcess] = {}
+        self._installing: set[str] = set()
         self._lock = threading.Lock()
         self._agent_locks: dict[str, threading.Lock] = {}
 
@@ -242,8 +243,42 @@ class Supervisor:
         self._forget(handle)
         return None
 
+    @contextmanager
+    def reserved_for_install(
+        self, agent_id: str, previous: InstalledAgent | None
+    ) -> Iterator[None]:
+        """Hold an agent while a new version is installed.
+
+        A running version is stopped (it saves its state first) and nobody can start the
+        agent until the install ends. If the install fails, a version that was running is
+        started again, so a failed update does not leave the user without the agent.
+        """
+        with self._agent_lock(agent_id):
+            with self._lock:
+                handle = self._running.get(agent_id)
+            was_running = handle is not None and handle.alive
+            if handle is not None:
+                self._shutdown(handle)
+            with self._lock:
+                self._installing.add(agent_id)
+        succeeded = False
+        try:
+            yield
+            succeeded = True
+        finally:
+            with self._lock:
+                self._installing.discard(agent_id)
+            if was_running and not succeeded and previous is not None:
+                try:
+                    self.start(previous)
+                except ManagerError as exc:
+                    log.warning("could not restart %s after a failed update: %s", agent_id, exc)
+
     def start(self, agent: InstalledAgent) -> AgentProcess:
         with self._agent_lock(agent.id):
+            with self._lock:
+                if agent.id in self._installing:
+                    raise AgentUpdatingError(f"{agent.id} is being updated; try again shortly")
             existing = self.get(agent.id)
             if existing is not None:
                 return existing

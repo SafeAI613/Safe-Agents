@@ -8,11 +8,14 @@ export function ConversationPicker({
   client,
   threadId,
   refreshKey,
+  disabled,
   onSelect,
 }: {
   client: Client;
   threadId: string | null;
   refreshKey: number;
+  /** Switching while a reply streams would mix the two conversations. */
+  disabled: boolean;
   onSelect: (threadId: string | null) => void;
 }) {
   const threads = useAsync(
@@ -35,6 +38,7 @@ export function ConversationPicker({
       שיחות:{" "}
       <select
         aria-label="שיחות קודמות"
+        disabled={disabled}
         value={threadId && options.some((o) => o.id === threadId) ? threadId : ""}
         onChange={(event) => onSelect(event.target.value || null)}
       >

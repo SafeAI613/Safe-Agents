@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -10,7 +10,6 @@ from conftest import FakeEnvBuilder, manifest
 from safe_agents_manager.config import Settings
 from safe_agents_manager.errors import (
     AgentAlreadyInstalledError,
-    AgentRunningError,
     ArchiveError,
     InstallError,
     ManifestError,
@@ -39,7 +38,6 @@ def make_installer(
     settings: Settings,
     env_builder: FakeEnvBuilder | None = None,
     smoke: SmokeRecorder | None = None,
-    running: bool = False,
 ) -> tuple[Installer, AgentStore]:
     settings.ensure_dirs()
     store = AgentStore(settings.db_path)
@@ -48,7 +46,6 @@ def make_installer(
         store,
         env_builder or FakeEnvBuilder(),
         smoke or SmokeRecorder(),
-        is_running=lambda _id: running,
     )
     return installer, store
 
@@ -157,10 +154,31 @@ def test_failed_update_keeps_previous_version(settings: Settings, make_agent_zip
     assert stored is not None and stored.version == "1.0.0"
 
 
-def test_update_refused_while_running(settings: Settings, make_agent_zip: MakeZip) -> None:
-    installer, _ = make_installer(settings, running=True)
-    with pytest.raises(AgentRunningError):
-        installer.install_archive(make_agent_zip())
+def test_install_holds_a_reservation_until_it_ends(
+    settings: Settings, make_agent_zip: MakeZip
+) -> None:
+    from contextlib import contextmanager
+
+    calls: list[str] = []
+
+    @contextmanager
+    def reserve(agent_id: str, previous: object) -> Iterator[None]:
+        calls.append(f"enter {agent_id} previous={previous is not None}")
+        yield
+        calls.append("exit")
+
+    settings.ensure_dirs()
+    installer = Installer(
+        settings, AgentStore(settings.db_path), FakeEnvBuilder(), SmokeRecorder(), reserve
+    )
+    installer.install_archive(make_agent_zip(manifest("1.0.0")))
+    installer.install_archive(make_agent_zip(manifest("1.1.0")))
+    assert calls == [
+        "enter foo_agent previous=False",
+        "exit",
+        "enter foo_agent previous=True",
+        "exit",
+    ]
 
 
 def test_expected_identity_is_enforced(settings: Settings, make_agent_zip: MakeZip) -> None:
@@ -177,7 +195,8 @@ def test_cleanup_orphans(settings: Settings, make_agent_zip: MakeZip) -> None:
     (settings.agents_dir / ".staging-dead").mkdir()
     (settings.agents_dir / "foo_agent" / "9.9.9").mkdir()
     (settings.agents_dir / "ghost" / "1.0.0").mkdir(parents=True)
-    removed = installer.cleanup_orphans()
+    assert installer.cleanup_orphans() == [], "fresh items may belong to a running install"
+    removed = installer.cleanup_orphans(min_age_s=0)
     assert len(removed) == 3
     assert agent.install_dir.is_dir()
     assert not (settings.agents_dir / "ghost").exists()

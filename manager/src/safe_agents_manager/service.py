@@ -80,7 +80,7 @@ class AgentManager:
             self.store,
             env_builder or UvEnvBuilder(settings),
             smoke_test or self.supervisor.probe,
-            is_running=lambda agent_id: self.supervisor.get(agent_id) is not None,
+            reserve=self.supervisor.reserved_for_install,
         )
         self.jobs = JobRunner()
         orphans = self.supervisor.reap_orphans()
@@ -291,10 +291,6 @@ class AgentManager:
             emit(InstallStep.FAILED, f"could not save the download: {exc}")
             archive.unlink(missing_ok=True)
             raise DownloadError(f"could not save the download: {exc}") from exc
-        # The user asked for this update: stop the running version (it saves its state)
-        # only now, after the download succeeded, to keep the downtime short.
-        if self.supervisor.stop(agent_id):
-            emit(InstallStep.DOWNLOADING, "stopped the running version for the update")
         try:
             return self.installer.install_archive(
                 archive,

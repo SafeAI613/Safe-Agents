@@ -101,9 +101,7 @@ def test_package_installs_and_entry_passes_catalog_validation(
 ) -> None:
     archive, digest = package_agent(agent_dir)
     settings.ensure_dirs()
-    installer = Installer(
-        settings, AgentStore(settings.db_path), FakeEnvBuilder(), lambda *_: None, lambda _: False
-    )
+    installer = Installer(settings, AgentStore(settings.db_path), FakeEnvBuilder(), lambda *_: None)
     agent = installer.install_archive(archive, expected_sha256=digest)
     assert (agent.install_dir / "src" / "agent" / "cli.py").is_file()
 
@@ -123,3 +121,39 @@ def test_cli_flow(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert "sha256:" in out and '"id": "bar_agent"' in out
     (target / "requirements.txt").write_text("")
     assert main([*home, "check", str(target)]) == 1
+
+
+def test_nested_build_folder_is_kept_but_top_level_build_is_not(agent_dir: Path) -> None:
+    (agent_dir / "agent" / "build").mkdir()
+    (agent_dir / "agent" / "build" / "steps.py").write_text("STEPS = []\n")
+    (agent_dir / "build").mkdir()
+    (agent_dir / "build" / "junk.txt").write_text("x")
+    archive, _ = package_agent(agent_dir)
+    names = zipfile.ZipFile(archive).namelist()
+    assert "foo_agent/agent/build/steps.py" in names
+    assert "foo_agent/build/junk.txt" not in names
+
+
+def test_template_copy_skips_compiled_files(tmp_path: Path) -> None:
+    from safe_agents_manager.devtools import _copy_template
+
+    template = tmp_path / "template"
+    (template / "agent" / "__pycache__").mkdir(parents=True)
+    (template / "agent" / "graph.py").write_text("ID = '__AGENT_ID__'\n")
+    (template / "agent" / "__pycache__" / "graph.cpython-312.pyc").write_bytes(b"\x89\xff\x00")
+    target = tmp_path / "out"
+    target.mkdir()
+    _copy_template(template, target, {"__AGENT_ID__": "foo_agent"})
+    assert (target / "agent" / "graph.py").read_text() == "ID = 'foo_agent'\n"
+    assert not (target / "agent" / "__pycache__").exists()
+
+
+def test_repository_url_must_be_a_github_repo(agent_dir: Path) -> None:
+    data = json.loads((agent_dir / "manifest.json").read_text())
+    del data["repository_url"]
+    (agent_dir / "manifest.json").write_text(json.dumps(data))
+    # repository_url is required by the schema, so the manifest itself is rejected.
+    assert errors(agent_dir)
+    data["repository_url"] = "https://gitlab.com/foo"
+    (agent_dir / "manifest.json").write_text(json.dumps(data))
+    assert any("repository_url" in message for message in errors(agent_dir))

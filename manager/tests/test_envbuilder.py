@@ -50,3 +50,19 @@ def test_missing_uv(tmp_path: Path, settings: Settings) -> None:
     builder = UvEnvBuilder(dataclasses.replace(settings, uv_path=tmp_path / "nope"))
     with pytest.raises(InstallError, match="uv was not found"):
         builder._run(["venv"], lambda _: None)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="uses a shebang script as uv")
+def test_timeout_stops_children_holding_the_output(tmp_path: Path, settings: Settings) -> None:
+    # uv starts a child that inherits stdout and keeps running: the timeout must still win.
+    uv = fake_uv(
+        tmp_path,
+        "import subprocess\n"
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+        "time.sleep(60)",
+    )
+    builder = UvEnvBuilder(dataclasses.replace(settings, uv_path=uv), timeout_s=1)
+    started = time.monotonic()
+    with pytest.raises(InstallError, match="timed out"):
+        builder._run(["pip"], lambda _: None)
+    assert time.monotonic() - started < 10

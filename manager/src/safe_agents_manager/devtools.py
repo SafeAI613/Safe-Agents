@@ -19,6 +19,7 @@ from urllib.parse import urlsplit
 
 from .config import Settings
 from .errors import ManagerError
+from .fsutil import remove_tree
 from .manifest import (
     MANIFEST_FILENAME,
     REQUIREMENTS_FILENAME,
@@ -29,20 +30,16 @@ from .manifest import (
 from .secret_store import StaticSecretProvider
 
 AGENT_ID = re.compile(r"^[a-z][a-z0-9_]{2,63}$")
-# Never shipped in a package: secrets, environments, caches, build output.
-EXCLUDED = (
+# Never shipped in a package. Names that are only junk at the agent's top level (a
+# virtualenv, build output) are anchored there; a package called "build" deeper in the
+# code is legitimate and must be kept.
+EXCLUDED_ANYWHERE = (
     ".git",
-    ".venv",
-    "venv",
-    "env",
     "__pycache__",
     "*.pyc",
     ".env",
     ".langgraph_api",
     "node_modules",
-    "dist",
-    "build",
-    "*.spec",
     ".DS_Store",
     ".idea",
     ".vscode",
@@ -50,6 +47,7 @@ EXCLUDED = (
     ".mypy_cache",
     ".ruff_cache",
 )
+EXCLUDED_AT_TOP = (".venv", "venv", "env", "dist", "build", "*.spec")
 # Fixed timestamp so packaging the same files twice gives the same sha256.
 ZIP_DATE = (1980, 1, 1, 0, 0, 0)
 
@@ -68,6 +66,9 @@ class Finding:
 
 def _copy_template(node: Traversable, target: Path, replacements: dict[str, str]) -> None:
     for item in node.iterdir():
+        # An installed package has __pycache__/*.pyc next to the template sources.
+        if _matches(item.name, ("__pycache__", "*.pyc")):
+            continue
         name = ".gitignore" if item.name == "gitignore.txt" else item.name
         if item.is_dir():
             (target / name).mkdir(exist_ok=True)
@@ -84,21 +85,45 @@ def new_agent(directory: Path, agent_id: str, name: str) -> Path:
         raise ValueError("agent id must be snake_case: a-z, 0-9 and _, starting with a letter")
     if directory.exists() and any(directory.iterdir()):
         raise ValueError(f"{directory} is not empty")
+    created = not directory.exists()
     directory.mkdir(parents=True, exist_ok=True)
     template = resources.files(__package__).joinpath("templates/agent")
-    _copy_template(
-        template,
-        directory,
-        {"__AGENT_ID__": agent_id, "__AGENT_NAME__": name, "__TODAY__": date.today().isoformat()},
-    )
+    try:
+        _copy_template(
+            template,
+            directory,
+            {
+                "__AGENT_ID__": agent_id,
+                "__AGENT_NAME__": name,
+                "__TODAY__": date.today().isoformat(),
+            },
+        )
+    except BaseException:
+        # Never leave a half-created agent behind.
+        if created:
+            remove_tree(directory)
+        else:
+            for child in directory.iterdir():
+                if child.is_dir():
+                    remove_tree(child)
+                else:
+                    child.unlink()
+        raise
     return directory
 
 
 # -- check ---------------------------------------------------------------------------------
 
 
+def _matches(name: str, patterns: tuple[str, ...]) -> bool:
+    return any(fnmatch.fnmatch(name, pattern) for pattern in patterns)
+
+
 def _is_excluded(relative: Path) -> bool:
-    return any(fnmatch.fnmatch(part, pattern) for part in relative.parts for pattern in EXCLUDED)
+    parts = relative.parts
+    if parts and _matches(parts[0], EXCLUDED_AT_TOP):
+        return True
+    return any(_matches(part, EXCLUDED_ANYWHERE) for part in parts)
 
 
 def check_agent(directory: Path) -> tuple[AgentManifest | None, list[Finding]]:
@@ -112,6 +137,15 @@ def check_agent(directory: Path) -> tuple[AgentManifest | None, list[Finding]]:
     requirements = (directory / REQUIREMENTS_FILENAME).read_text(encoding="utf-8")
     if not re.search(r"^\s*langgraph\b", requirements, re.MULTILINE | re.IGNORECASE):
         findings.append(Finding("error", "requirements.txt must include langgraph"))
+    repository = urlsplit(str(manifest.raw.get("repository_url", "")))
+    if repository.hostname != "github.com" or len(repository.path.strip("/").split("/")) != 2:
+        findings.append(
+            Finding(
+                "error",
+                "repository_url must be https://github.com/<owner>/<repo> "
+                "(the catalog entry points at its manifest)",
+            )
+        )
     if "OWNER/" in json.dumps(manifest.raw):
         findings.append(Finding("warning", "manifest.json still contains the OWNER placeholder"))
     source = urlsplit(manifest.runtime["source_url"])
@@ -145,7 +179,8 @@ def install_check(directory: Path, settings: Settings) -> None:
     """Package and install the agent into a throw-away folder with uv + smoke test."""
     from .service import AgentManager
 
-    with tempfile.TemporaryDirectory(prefix="agent-check-") as tmp:
+    # ignore_cleanup_errors: on Windows a just-stopped server may hold a file for a moment.
+    with tempfile.TemporaryDirectory(prefix="agent-check-", ignore_cleanup_errors=True) as tmp:
         archive, _ = package_agent(directory, Path(tmp) / "agent.zip")
         scratch = dataclasses.replace(settings, home=Path(tmp) / "home")
         manager = AgentManager(scratch, StaticSecretProvider({}))

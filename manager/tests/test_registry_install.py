@@ -177,3 +177,83 @@ def test_update_stops_the_running_version(
     assert updated.version == "1.1.0"
     assert process.poll() is not None, "old version was stopped"
     assert registry_manager.supervisor.get("foo_agent") is None
+
+
+def test_failed_update_restarts_the_previous_version(
+    registry_manager: AgentManager, github: FakeGitHub
+) -> None:
+    import hashlib
+
+    registry_manager.install_from_registry("foo_agent")
+    registry_manager.start("foo_agent")
+    broken = zip_bytes(agent_files(manifest("1.1.0", graph_entry="agent/missing.py:graph")))
+    url = "https://release-assets.githubusercontent.com/github-production-release-asset/3/b.zip"
+    github.add(url, 200, broken)
+    entry = registry_entry(github.sha256)
+    entry["versions"].append(
+        {
+            "version": "1.1.0",
+            "manifest_url": MANIFEST_URL,
+            "source_url": url,
+            "sha256": hashlib.sha256(broken).hexdigest(),
+        }
+    )
+    entry["latest"] = "1.1.0"
+    github.set_registry(registry_doc([entry]), etag='"v3"')
+    with pytest.raises(ManifestError):
+        registry_manager.install_from_registry("foo_agent")
+    # Validation failed before the agent was touched: it kept running.
+    assert registry_manager.supervisor.get("foo_agent") is not None
+
+    from safe_agents_manager.errors import InstallError
+
+    good_but_failing = zip_bytes(agent_files(manifest("1.2.0")))
+    url2 = "https://release-assets.githubusercontent.com/github-production-release-asset/4/c.zip"
+    github.add(url2, 200, good_but_failing)
+    entry["versions"].append(
+        {
+            "version": "1.2.0",
+            "manifest_url": MANIFEST_URL,
+            "source_url": url2,
+            "sha256": hashlib.sha256(good_but_failing).hexdigest(),
+        }
+    )
+    entry["latest"] = "1.2.0"
+    github.set_registry(registry_doc([entry]), etag='"v4"')
+
+    def failing_smoke(*_: object) -> None:
+        raise InstallError("graph failed to load")
+
+    registry_manager.installer._smoke_test = failing_smoke
+    with pytest.raises(InstallError):
+        registry_manager.install_from_registry("foo_agent")
+    restarted = registry_manager.supervisor.get("foo_agent")
+    assert restarted is not None, "the old version runs again after the failed update"
+    assert registry_manager.get_agent("foo_agent").version == "1.0.0"
+
+
+def test_agent_cannot_start_while_it_is_being_installed(
+    registry_manager: AgentManager, github: FakeGitHub
+) -> None:
+    import threading
+
+    from safe_agents_manager.errors import AgentUpdatingError
+
+    registry_manager.install_from_registry("foo_agent")
+    publish_v110(github)
+    inside = threading.Event()
+    release = threading.Event()
+
+    def slow_smoke(*_: object) -> None:
+        inside.set()
+        release.wait(10)
+
+    registry_manager.installer._smoke_test = slow_smoke
+    worker = threading.Thread(target=registry_manager.install_from_registry, args=("foo_agent",))
+    worker.start()
+    assert inside.wait(10)
+    with pytest.raises(AgentUpdatingError):
+        registry_manager.start("foo_agent")
+    release.set()
+    worker.join(10)
+    assert registry_manager.start("foo_agent").port
