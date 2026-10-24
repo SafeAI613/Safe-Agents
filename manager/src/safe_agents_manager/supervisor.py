@@ -308,7 +308,7 @@ class Supervisor:
                 log_fh.flush()
                 process = subprocess.Popen(
                     command,
-                    cwd=layout.root,
+                    cwd=layout.root,  # relative paths in langgraph.json resolve from here
                     env=env,
                     stdin=subprocess.DEVNULL,
                     stdout=log_fh,

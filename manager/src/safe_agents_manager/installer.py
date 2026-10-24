@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -29,6 +30,13 @@ from .store import AgentStore, InstalledAgent
 log = logging.getLogger(__name__)
 
 STAGING_PREFIX = ".staging-"
+
+
+def _remove(path: Path) -> None:
+    if path.is_dir():
+        remove_tree(path)
+    else:
+        path.unlink(missing_ok=True)
 
 
 class InstallStep(StrEnum):
@@ -145,6 +153,10 @@ class Installer:
                 lambda line: emit(InstallStep.CREATING_ENV, line, detail=True),
             )
 
+            if previous is not None and previous.layout.state_dir.is_dir():
+                # Carry the conversations over; the old version is only removed on success.
+                shutil.copytree(previous.layout.state_dir, layout.state_dir)
+
             emit(InstallStep.GENERATING_CONFIG, "writing langgraph.json")
             write_langgraph_config(layout, manifest)
 
@@ -183,23 +195,20 @@ class Installer:
             raise ManifestError(f"archive contains version {manifest.version}, expected {version}")
 
     def cleanup_orphans(self) -> list[Path]:
-        """Remove staging folders and version folders the store does not know about."""
+        """Remove staging folders, unknown agents, and versions the store does not reference."""
         agents_dir = self._settings.agents_dir
         if not agents_dir.is_dir():
             return []
-        known = {agent.install_dir.resolve() for agent in self._store.list()}
+        installed = {agent.id: agent.install_dir.resolve() for agent in self._store.list()}
         removed: list[Path] = []
         for entry in agents_dir.iterdir():
-            if entry.name.startswith(STAGING_PREFIX):
-                remove_tree(entry)
+            if not entry.is_dir() or entry.name not in installed:
+                _remove(entry)
                 removed.append(entry)
                 continue
-            if not entry.is_dir():
-                continue
-            for version_dir in entry.iterdir():
-                if version_dir.is_dir() and version_dir.resolve() not in known:
-                    remove_tree(version_dir)
-                    removed.append(version_dir)
-            if not any(entry.iterdir()):
-                entry.rmdir()
+            for child in entry.iterdir():
+                if child.resolve() == installed[entry.name]:
+                    continue
+                _remove(child)
+                removed.append(child)
         return removed

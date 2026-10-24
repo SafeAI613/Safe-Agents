@@ -55,6 +55,11 @@ class AgentLayout:
         return self.root / "inbox"
 
     @property
+    def state_dir(self) -> Path:
+        """Server state (conversations); langgraph dev keeps it in its working folder."""
+        return self.root / ".langgraph_api"
+
+    @property
     def langgraph_config(self) -> Path:
         return self.root / "langgraph.json"
 

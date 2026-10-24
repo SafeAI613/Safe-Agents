@@ -1,8 +1,10 @@
+import { Client } from "@langchain/langgraph-sdk";
 import { useStream } from "@langchain/react";
-import { useEffect, useRef, useState, type DragEvent, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } from "react";
 
 import { AgentSecretsDialog } from "../components/AgentSecretsDialog";
 import { ApprovalCard } from "../components/ApprovalCard";
+import { ConversationPicker } from "../components/ConversationPicker";
 import { ErrorBanner } from "../components/ErrorBanner";
 import { useApi } from "../lib/context";
 import { ApiError } from "../lib/errors";
@@ -91,13 +93,20 @@ function ChatSession({ agent, started }: { agent: InstalledAgent; started: Start
     messages: [] as ReturnType<typeof useStream>["messages"],
   });
 
+  const [historyVersion, setHistoryVersion] = useState(0);
+  const client = useMemo(
+    () => new Client({ apiUrl: started.url, apiKey: started.token }),
+    [started.url, started.token],
+  );
   const stream = useStream({
-    apiUrl: started.url,
-    apiKey: started.token,
+    client,
     assistantId: started.graph_id,
     threadId,
     onThreadId: setThreadId,
-    onCompleted: () => void reportUsage(),
+    onCompleted: () => {
+      void reportUsage();
+      setHistoryVersion((v) => v + 1);
+    },
   });
   latest.current = { threadId, model, messages: stream.messages };
 
@@ -158,6 +167,19 @@ function ChatSession({ agent, started }: { agent: InstalledAgent; started: Start
     }
   }
 
+  function openConversation(id: string | null) {
+    setThreadId(id);
+    setNotice(undefined);
+    setUsage(undefined);
+    if (id) {
+      // Show what the earlier conversation cost so far.
+      api
+        .usage(agent.id, id)
+        .then((summary) => summary.input_tokens > 0 && setUsage(summary))
+        .catch(() => undefined);
+    }
+  }
+
   function newConversation() {
     setThreadId(null);
     setUsage(undefined);
@@ -207,6 +229,12 @@ function ChatSession({ agent, started }: { agent: InstalledAgent; started: Start
         <button type="button" onClick={newConversation} disabled={stream.isLoading}>
           שיחה חדשה
         </button>
+        <ConversationPicker
+          client={client}
+          threadId={threadId}
+          refreshKey={historyVersion}
+          onSelect={(id) => (id ? openConversation(id) : newConversation())}
+        />
       </div>
 
       {showHelp && <HelpPanel agent={agent} onPick={(text) => setInput(text)} />}

@@ -76,7 +76,8 @@ class FakeEnvBuilder:
 
 
 def fake_server_command(layout: AgentLayout, port: int) -> list[str]:
-    return [sys.executable, str(FAKE_SERVER), str(port)]
+    # Like the real server: config passed by path, state written to the working folder.
+    return [sys.executable, str(FAKE_SERVER), str(port), "--config", str(layout.langgraph_config)]
 
 
 @pytest.fixture

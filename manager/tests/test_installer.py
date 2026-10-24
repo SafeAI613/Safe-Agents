@@ -181,3 +181,23 @@ def test_cleanup_orphans(settings: Settings, make_agent_zip: MakeZip) -> None:
     assert len(removed) == 3
     assert agent.install_dir.is_dir()
     assert not (settings.agents_dir / "ghost").exists()
+
+
+def test_history_survives_updates_and_goes_with_uninstall(
+    settings: Settings, make_agent_zip: MakeZip
+) -> None:
+    from safe_agents_manager.secret_store import StaticSecretProvider
+    from safe_agents_manager.service import AgentManager
+
+    manager = AgentManager(
+        settings, StaticSecretProvider({}), env_builder=FakeEnvBuilder(), smoke_test=lambda *_: None
+    )
+    old = manager.install_archive(make_agent_zip(manifest("1.0.0")))
+    old.layout.state_dir.mkdir()
+    (old.layout.state_dir / "conversations.db").write_text("x")
+    new = manager.install_archive(make_agent_zip(manifest("1.1.0")))
+    assert (new.layout.state_dir / "conversations.db").read_text() == "x"
+    assert not old.install_dir.exists()
+    manager.uninstall(new.id)
+    assert not (settings.agents_dir / new.id).exists()
+    manager.shutdown()

@@ -5,6 +5,7 @@ import { ManagerApi } from "./api";
 import { ApiError, describeError } from "./errors";
 import { conversationMarkdown, formatUsd, textOf, usageItems } from "./messages";
 import { runStatus } from "./runStatus";
+import { conversationTitle } from "./threads";
 import { parseBlock, readSse } from "./sse";
 
 function streamOf(...chunks: string[]): ReadableStream<Uint8Array> {
@@ -177,5 +178,22 @@ describe("ManagerApi", () => {
     const job = await api.followJob("j", (event) => seen.push(event.step));
     expect(seen).toEqual(["extracting"]);
     expect(job.status).toBe("succeeded");
+  });
+});
+
+describe("conversationTitle", () => {
+  it("uses the first user message, shortened", () => {
+    const values = {
+      messages: [
+        { type: "ai", content: "hi" },
+        { type: "human", content: [{ type: "text", text: "Lorem   ipsum\ndolor" }] },
+      ],
+    };
+    expect(conversationTitle(values)).toBe("Lorem ipsum dolor");
+    expect(conversationTitle({ messages: [{ type: "human", content: "x".repeat(80) }] }, 10)).toBe(
+      "xxxxxxxxx…",
+    );
+    expect(conversationTitle({ messages: [] })).toBeNull();
+    expect(conversationTitle(null)).toBeNull();
   });
 });

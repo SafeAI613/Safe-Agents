@@ -5,6 +5,7 @@ Run with: ``uv run pytest -m integration``
 
 from __future__ import annotations
 
+import json
 import shutil
 import zipfile
 from collections.abc import Iterator
@@ -72,6 +73,33 @@ def test_install_run_interrupt_and_resume(real_manager: AgentManager, tmp_path: 
         state = client.get(f"/threads/{thread_id}/state").raise_for_status().json()
         assert state["values"]["messages"][-1]["content"] == "Approved."
 
+    assert real_manager.stop(agent.id)
+
+    # Conversation history survives a restart of the agent server.
+    handle = real_manager.start(agent.id)
+    with httpx.Client(base_url=handle.url, headers=handle.auth_headers, timeout=30) as client:
+        found = client.post("/threads/search", json={"limit": 10}).raise_for_status().json()
+        assert thread_id in [thread["thread_id"] for thread in found]
+    assert real_manager.stop(agent.id)
+
+    # ...and an update to a new version.
+    data = json.loads((EXAMPLE_AGENT / "manifest.json").read_text())
+    data["version"] = "1.0.1"
+    updated = tmp_path / "foo-agent-1.0.1.zip"
+    with (
+        zipfile.ZipFile(zip_example(tmp_path / "base.zip")) as src,
+        zipfile.ZipFile(updated, "w") as dst,
+    ):
+        for item in src.infolist():
+            body = src.read(item)
+            if item.filename.endswith("/manifest.json"):
+                body = json.dumps(data).encode()
+            dst.writestr(item, body)
+    assert real_manager.install_archive(updated).version == "1.0.1"
+    handle = real_manager.start(agent.id)
+    with httpx.Client(base_url=handle.url, headers=handle.auth_headers, timeout=30) as client:
+        found = client.post("/threads/search", json={"limit": 10}).raise_for_status().json()
+        assert thread_id in [thread["thread_id"] for thread in found]
     assert real_manager.stop(agent.id)
     real_manager.uninstall(agent.id)
     assert not (real_manager.settings.agents_dir / agent.id).exists()

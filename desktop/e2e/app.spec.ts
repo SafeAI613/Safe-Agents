@@ -82,6 +82,24 @@ test("rejecting the approval is passed to the agent", async () => {
   await expect(page.getByTestId("messages")).not.toContainText("Approved.");
 });
 
+test("earlier conversations can be reopened", async () => {
+  const picker = page.getByLabel("שיחות קודמות");
+  await expect(picker.locator("option")).toHaveCount(3); // new + "foo" + "bar"
+  const open = async (prefix: RegExp) => {
+    const value = await picker.locator("option", { hasText: prefix }).getAttribute("value");
+    await picker.selectOption(value ?? "");
+  };
+  const messages = page.getByTestId("messages");
+
+  await open(/^foo/);
+  await expect(messages).toContainText("Approved.");
+  await expect(messages).not.toContainText("Rejected by the user.");
+  await expect(page.getByTestId("cost")).toContainText("120");
+
+  await open(/^bar/);
+  await expect(messages).toContainText("Rejected by the user.");
+});
+
 test("help panel shows the agent's examples", async () => {
   await page.getByRole("button", { name: "עזרה" }).click();
   const help = page.getByRole("complementary", { name: "עזרה" });

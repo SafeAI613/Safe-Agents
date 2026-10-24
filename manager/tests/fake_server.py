@@ -39,7 +39,7 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         body = json.loads(self.rfile.read(length) or b"{}")
         if self.path == "/assistants/search":
-            config = json.loads(Path("langgraph.json").read_text())
+            config = json.loads(Path(sys.argv[sys.argv.index("--config") + 1]).read_text())
             found = body.get("graph_id") in config["graphs"] and "--no-graphs" not in sys.argv
             self._send(200, [{"graph_id": body["graph_id"]}] if found else [])
         else:

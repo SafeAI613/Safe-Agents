@@ -159,7 +159,7 @@ def test_next_manager_stops_agents_of_a_killed_one(
 ) -> None:
     def with_root(layout: AgentLayout, port: int) -> list[str]:
         # Like the real command, the command line names the agent's folder.
-        return [*fake_server_command(layout, port), "--config", str(layout.langgraph_config)]
+        return fake_server_command(layout, port)
 
     crashed = AgentManager(
         settings, secrets, env_builder=FakeEnvBuilder(), command_factory=with_root
