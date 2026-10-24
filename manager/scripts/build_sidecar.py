@@ -66,6 +66,9 @@ def build_manager(triple: str) -> Path:
                 # Loaded dynamically, so PyInstaller cannot see them by itself.
                 "--collect-data",
                 "safe_agents_manager",
+                # --collect-data skips .py files; the agent template is mostly .py.
+                "--add-data",
+                f"{MANAGER_DIR / 'src/safe_agents_manager/templates'}:safe_agents_manager/templates",
                 "--collect-submodules",
                 "uvicorn",
                 "--collect-submodules",
