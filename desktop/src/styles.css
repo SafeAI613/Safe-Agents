@@ -129,6 +129,10 @@ button.link {
 }
 
 .sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  align-self: start;
   background: var(--surface);
   border-inline-end: 1px solid var(--border);
   padding: 1rem;
