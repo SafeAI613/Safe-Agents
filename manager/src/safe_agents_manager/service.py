@@ -291,6 +291,10 @@ class AgentManager:
             emit(InstallStep.FAILED, f"could not save the download: {exc}")
             archive.unlink(missing_ok=True)
             raise DownloadError(f"could not save the download: {exc}") from exc
+        # The user asked for this update: stop the running version (it saves its state)
+        # only now, after the download succeeded, to keep the downtime short.
+        if self.supervisor.stop(agent_id):
+            emit(InstallStep.DOWNLOADING, "stopped the running version for the update")
         try:
             return self.installer.install_archive(
                 archive,

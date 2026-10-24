@@ -165,3 +165,15 @@ def test_api_registry_manifest_preview(client: TestClient, github: FakeGitHub) -
     assert preview["secrets"][0]["key"] == "OPENROUTER_API_KEY"
     github.add(MANIFEST_URL, 200, b"{not json")
     assert client.get("/registry/foo_agent/manifest", headers=AUTH).status_code == 502
+
+
+def test_update_stops_the_running_version(
+    registry_manager: AgentManager, github: FakeGitHub
+) -> None:
+    registry_manager.install_from_registry("foo_agent")
+    process = registry_manager.start("foo_agent").process
+    publish_v110(github)
+    updated = registry_manager.install_from_registry("foo_agent")
+    assert updated.version == "1.1.0"
+    assert process.poll() is not None, "old version was stopped"
+    assert registry_manager.supervisor.get("foo_agent") is None
