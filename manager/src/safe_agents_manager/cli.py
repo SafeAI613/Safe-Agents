@@ -199,6 +199,20 @@ def _desktop_secrets() -> SecretStore:
     return SecretStore(backend, fallback=EnvSecretProvider())
 
 
+def _log_to_file(settings: Settings) -> None:
+    """Desktop mode has no console: keep a rotating log next to the agents' logs."""
+    from logging.handlers import RotatingFileHandler
+
+    settings.logs_dir.mkdir(parents=True, exist_ok=True)
+    handler = RotatingFileHandler(
+        settings.logs_dir / "manager.log", maxBytes=1_000_000, backupCount=3, encoding="utf-8"
+    )
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    root = logging.getLogger()
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
+
+
 def _serve(manager: AgentManager, args: argparse.Namespace) -> None:
     import uvicorn
 
@@ -212,8 +226,10 @@ def _serve(manager: AgentManager, args: argparse.Namespace) -> None:
         token = secrets.token_urlsafe(32)
         ready["token"] = token
     app = create_app(manager, token)
+    _log_to_file(manager.settings)
+    # log_config=None: uvicorn's own messages (including unhandled errors) go to our handlers.
     config = uvicorn.Config(
-        app, host="127.0.0.1", port=int(str(ready["port"])), log_level="warning"
+        app, host="127.0.0.1", port=int(str(ready["port"])), log_level="info", log_config=None
     )
     server = uvicorn.Server(config)
 

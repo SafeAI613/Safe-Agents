@@ -353,3 +353,37 @@ def test_serve_exits_when_stdin_closes(tmp_path: Path) -> None:
     finally:
         if proc.poll() is None:
             proc.kill()
+
+
+def test_about_and_manager_log(client: TestClient, desktop: AgentManager) -> None:
+    about = client.get("/about", headers=AUTH).json()
+    assert about["version"] and about["logs_dir"] == str(desktop.settings.logs_dir)
+    assert client.get("/logs/manager", headers=AUTH).json() == {"lines": []}
+    (desktop.settings.logs_dir / "manager.log").write_text("a\nb\nc\n")
+    assert client.get("/logs/manager?tail=2", headers=AUTH).json() == {"lines": ["b", "c"]}
+
+
+def test_serve_writes_a_log_file(tmp_path: Path) -> None:
+    env = {
+        **os.environ,
+        "SAFE_AGENTS_SECRETS": "memory",
+        "SAFE_AGENTS_TOKEN": "tok",
+        "SAFE_AGENTS_HOME": str(tmp_path / "home"),
+    }
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "safe_agents_manager", "serve", "--exit-on-stdin-close"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        env=env,
+    )
+    try:
+        assert proc.stdout is not None and proc.stdin is not None
+        port = json.loads(proc.stdout.readline())["port"]
+        httpx.get(f"http://127.0.0.1:{port}/agents", headers={"Authorization": "Bearer tok"})
+        proc.stdin.close()
+        proc.wait(timeout=15)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+    log = (tmp_path / "home" / "logs" / "manager.log").read_text()
+    assert "GET /agents" in log

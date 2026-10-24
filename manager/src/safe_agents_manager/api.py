@@ -234,6 +234,14 @@ def create_app(manager: AgentManager, token: str) -> FastAPI:
     def set_agent_secrets(agent_id: AgentId, body: AgentSecretsRequest) -> None:
         manager.set_agent_secrets(agent_id, body.values)
 
+    @router.get("/about")
+    def about() -> dict[str, Any]:
+        return manager.about()
+
+    @router.get("/logs/manager")
+    def manager_log(tail: Annotated[int, Query(ge=1, le=2000)] = 200) -> dict[str, Any]:
+        return {"lines": manager.manager_log(tail)}
+
     @router.get("/settings")
     def get_settings() -> dict[str, Any]:
         return manager.settings_status()

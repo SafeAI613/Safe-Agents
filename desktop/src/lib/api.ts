@@ -1,6 +1,7 @@
 import { ApiError } from "./errors";
 import { readSse } from "./sse";
 import type {
+  About,
   Catalog,
   InstallEvent,
   InstalledAgent,
@@ -118,6 +119,11 @@ export class ManagerApi {
     }
     throw new ApiError("network", "lost connection to the install progress", 0);
   }
+
+  // support
+  about = () => this.request<About>("GET", "/about");
+  managerLog = (tail = 300) =>
+    this.request<{ lines: string[] }>("GET", `/logs/manager?tail=${tail}`);
 
   // settings
   settings = () => this.request<SettingsStatus>("GET", "/settings");

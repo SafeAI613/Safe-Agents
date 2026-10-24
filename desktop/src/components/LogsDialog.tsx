@@ -3,11 +3,15 @@ import { useAsync } from "../lib/useAsync";
 import { Dialog } from "./Dialog";
 import { ErrorBanner } from "./ErrorBanner";
 
-export function LogsDialog({ agentId, onClose }: { agentId: string; onClose: () => void }) {
+/** An agent's log, or the manager's own log when no agent is given. */
+export function LogsDialog({ agentId, onClose }: { agentId?: string; onClose: () => void }) {
   const api = useApi();
-  const logs = useAsync(() => api.logs(agentId, 300), [api, agentId]);
+  const logs = useAsync(
+    () => (agentId ? api.logs(agentId, 300) : api.managerLog(300)),
+    [api, agentId],
+  );
   return (
-    <Dialog title={`יומן – ${agentId}`} onClose={onClose}>
+    <Dialog title={agentId ? `יומן – ${agentId}` : "יומן המערכת"} onClose={onClose}>
       <ErrorBanner error={logs.error} onRetry={logs.reload} />
       <pre className="log tall" dir="ltr">
         {logs.data?.lines.join("\n") || "היומן ריק."}

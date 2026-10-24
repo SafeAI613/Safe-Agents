@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 
 import { ErrorBanner } from "../components/ErrorBanner";
+import { LogsDialog } from "../components/LogsDialog";
 import { useApi } from "../lib/context";
 import { formatUsd } from "../lib/messages";
 import { useAsync } from "../lib/useAsync";
@@ -10,6 +11,8 @@ export function SettingsPage({ onKeyRemoved }: { onKeyRemoved: () => void }) {
   const settings = useAsync(() => api.settings(), [api]);
   const keyInfo = useAsync(() => api.openRouterStatus(), [api]);
   const usage = useAsync(() => api.usage(), [api]);
+  const about = useAsync(() => api.about(), [api]);
+  const [showLog, setShowLog] = useState(false);
   const [newKey, setNewKey] = useState("");
   const [langsmith, setLangsmith] = useState("");
   const [error, setError] = useState<unknown>();
@@ -23,6 +26,24 @@ export function SettingsPage({ onKeyRemoved }: { onKeyRemoved: () => void }) {
       setNotice(message);
       settings.reload();
       keyInfo.reload();
+    } catch (reason) {
+      setError(reason);
+    }
+  }
+
+  async function copySupportInfo() {
+    // Never includes keys: the manager does not return them and logs never contain them.
+    const log = await api.managerLog(50).catch(() => ({ lines: [] as string[] }));
+    const text = [
+      `Safe Agents ${about.data?.version ?? "?"}`,
+      `data: ${about.data?.data_dir ?? "?"}`,
+      `user agent: ${navigator.userAgent}`,
+      "",
+      ...log.lines,
+    ].join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      setNotice("הפרטים הועתקו. אפשר להדביק אותם בפנייה לתמיכה.");
     } catch (reason) {
       setError(reason);
     }
@@ -156,11 +177,30 @@ export function SettingsPage({ onKeyRemoved }: { onKeyRemoved: () => void }) {
         )}
       </article>
 
-      {settings.data && (
-        <p className="muted">
-          ייצוא שיחות נשמר בתיקייה: <bdi dir="ltr">{settings.data.exports_dir}</bdi>
-        </p>
-      )}
+      <article className="card stack" aria-label="אודות ותמיכה">
+        <h2>אודות ותמיכה</h2>
+        {about.data && (
+          <dl className="facts">
+            <dt>גרסה</dt>
+            <dd dir="ltr">{about.data.version}</dd>
+            <dt>תיקיית נתונים</dt>
+            <dd dir="ltr">{about.data.data_dir}</dd>
+            <dt>יומנים</dt>
+            <dd dir="ltr">{about.data.logs_dir}</dd>
+            <dt>ייצוא שיחות</dt>
+            <dd dir="ltr">{about.data.exports_dir}</dd>
+          </dl>
+        )}
+        <div className="actions">
+          <button type="button" onClick={() => setShowLog(true)}>
+            יומן המערכת
+          </button>
+          <button type="button" onClick={() => void copySupportInfo()}>
+            העתקת פרטים לתמיכה
+          </button>
+        </div>
+      </article>
+      {showLog && <LogsDialog onClose={() => setShowLog(false)} />}
     </section>
   );
 }

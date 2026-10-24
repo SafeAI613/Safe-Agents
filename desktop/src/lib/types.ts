@@ -104,6 +104,15 @@ export interface SettingsStatus {
   exports_dir: string;
 }
 
+export interface About {
+  version: string;
+  data_dir: string;
+  agents_dir: string;
+  logs_dir: string;
+  exports_dir: string;
+  registry_url: string;
+}
+
 export interface KeyInfo {
   label: string | null;
   usage_usd: number | null;

@@ -24,6 +24,20 @@ cat > "$work/registry.json" <<'JSON'
   "registry_version": 1,
   "agents": [
     {
+      "id": "foo_agent",
+      "name": "Foo Agent",
+      "description": "Minimal reference agent.",
+      "latest": "2.0.0",
+      "versions": [
+        {
+          "version": "2.0.0",
+          "manifest_url": "https://raw.githubusercontent.com/foo/foo-agent/v2.0.0/manifest.json",
+          "source_url": "https://github.com/foo/foo-agent/releases/download/v2.0.0/foo.zip",
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      ]
+    },
+    {
       "id": "bar_agent",
       "name": "Bar Agent",
       "description": "Lorem ipsum dolor sit amet.",

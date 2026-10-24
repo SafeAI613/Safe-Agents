@@ -168,6 +168,20 @@ class AgentManager:
             "secrets": manifest.secret_fields(),
         }
 
+    def about(self) -> dict[str, Any]:
+        settings = self.settings
+        return {
+            "version": __version__,
+            "data_dir": str(settings.home),
+            "agents_dir": str(settings.agents_dir),
+            "logs_dir": str(settings.logs_dir),
+            "exports_dir": str(settings.exports_dir),
+            "registry_url": settings.registry_url,
+        }
+
+    def manager_log(self, tail: int = 200) -> list[str]:
+        return tail_lines(self.settings.logs_dir / "manager.log", tail)
+
     def logs(self, agent_id: str, tail: int = 200) -> list[str]:
         self.get_agent(agent_id)
         return tail_lines(self.settings.logs_dir / f"{agent_id}.log", tail)

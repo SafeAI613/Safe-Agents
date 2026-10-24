@@ -17,6 +17,13 @@ export function MyAgentsPage({
 }) {
   const api = useApi();
   const agents = useAsync(() => api.listAgents(), [api]);
+  // Best effort: offline or an unreachable catalog simply shows no update badges.
+  const catalog = useAsync(() => api.catalog().catch(() => null), [api]);
+  const latest = new Map(
+    (catalog.data?.agents ?? [])
+      .filter((entry) => entry.update_available)
+      .map((entry) => [entry.id, entry.latest]),
+  );
   const [secretsFor, setSecretsFor] = useState<InstalledAgent | null>(null);
   const [logsFor, setLogsFor] = useState<string | null>(null);
   const [removing, setRemoving] = useState<InstalledAgent | null>(null);
@@ -63,6 +70,16 @@ export function MyAgentsPage({
             <p className="muted">
               גרסה <bdi>{agent.version}</bdi>
             </p>
+            {latest.has(agent.id) && (
+              <p className="banner banner-warn">
+                <span>
+                  עדכון זמין: גרסה <bdi>{latest.get(agent.id)}</bdi>
+                </span>
+                <button type="button" className="link" onClick={onOpenStore}>
+                  לעדכון בחנות
+                </button>
+              </p>
+            )}
             {agent.missing_secrets.length > 0 && (
               <p className="banner banner-warn">חסרים מפתחות: {agent.missing_secrets.join(", ")}</p>
             )}

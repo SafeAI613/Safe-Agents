@@ -111,6 +111,12 @@ test("settings show the key and the recorded usage", async () => {
   await page.getByRole("button", { name: "הגדרות" }).click();
   await expect(page.getByText("e2e key")).toBeVisible();
   await expect(page.locator("table")).toContainText("meta-llama/llama-3.1-70b-instruct");
+
+  const support = page.getByRole("article", { name: "אודות ותמיכה" });
+  await expect(support).toContainText("0.1.0");
+  await support.getByRole("button", { name: "יומן המערכת" }).click();
+  await expect(page.getByRole("dialog", { name: "יומן המערכת" })).toContainText("GET /settings");
+  await page.getByRole("button", { name: "סגירת החלון" }).click();
 });
 
 test("store lists the catalog", async () => {
@@ -144,6 +150,7 @@ test("agents can be stopped and their log inspected", async () => {
   await page.getByRole("button", { name: "האייג'נטים שלי" }).click();
   const card = page.getByTestId("agent-foo_agent");
   await expect(card).toContainText("פועל");
+  await expect(card).toContainText("עדכון זמין: גרסה 2.0.0");
   await card.getByRole("button", { name: "יומן" }).click();
   await expect(page.getByRole("dialog", { name: "יומן – foo_agent" })).toContainText("starting");
   await page.getByRole("button", { name: "סגירת החלון" }).click();
