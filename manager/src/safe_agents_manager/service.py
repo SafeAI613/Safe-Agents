@@ -187,17 +187,43 @@ class AgentManager:
             archive, expected_sha256=expected_sha256, on_event=on_event
         )
 
-    def submit_install(self, archive: Path, *, expected_sha256: str | None = None) -> Job:
+    def submit_install(
+        self, archive: Path, *, expected_sha256: str | None = None, delete_after: bool = False
+    ) -> Job:
         if not archive.is_file():
             raise ArchiveError(f"archive not found: {archive}")
 
         def work(on_event: EventSink) -> dict[str, Any]:
-            agent = self.installer.install_archive(
-                archive, expected_sha256=expected_sha256, on_event=on_event
-            )
-            return agent.to_dict()
+            try:
+                agent = self.installer.install_archive(
+                    archive, expected_sha256=expected_sha256, on_event=on_event
+                )
+                return agent.to_dict()
+            finally:
+                if delete_after:
+                    archive.unlink(missing_ok=True)
 
         return self.jobs.submit("install", work)
+
+    def submit_uploaded_install(self, filename: str, stream: BinaryIO) -> Job:
+        """Install a zip the user picked in the app (not reviewed by the catalog CI)."""
+        if not filename.lower().endswith(".zip"):
+            raise InvalidRequestError("choose an agent .zip file")
+        target = self.settings.downloads_dir / f"upload-{uuid4().hex}.zip"
+        written = 0
+        try:
+            with target.open("wb") as out:
+                while chunk := stream.read(1024 * 1024):
+                    written += len(chunk)
+                    if written > self.settings.max_archive_bytes:
+                        raise ArchiveError(
+                            f"archive is larger than {self.settings.max_archive_bytes} bytes"
+                        )
+                    out.write(chunk)
+        except BaseException:
+            target.unlink(missing_ok=True)
+            raise
+        return self.submit_install(target, delete_after=True)
 
     def install_from_registry(
         self,

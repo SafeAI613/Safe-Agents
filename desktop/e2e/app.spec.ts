@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import { expect, test, type Page } from "@playwright/test";
 
@@ -101,13 +102,33 @@ test("store lists the catalog", async () => {
   await expect(card.getByRole("button", { name: "התקנה" })).toBeVisible();
 });
 
+test("install from a ZIP file: failure is explained, success shows the agent", async () => {
+  test.setTimeout(600_000); // a real install downloads the agent's dependencies
+  const work = fileURLToPath(new URL("./.tmp", import.meta.url));
+  const zipInput = page.getByTestId("install-zip");
+
+  await zipInput.setInputFiles(`${work}/foo-agent.zip`);
+  let dialog = page.getByRole("dialog", { name: "התקנה מקובץ: foo-agent.zip" });
+  await expect(dialog).toContainText("לא עבר את בדיקות הקטלוג");
+  await dialog.getByRole("button", { name: "התקנה" }).click();
+  await expect(dialog).toContainText("already installed");
+  await dialog.getByRole("button", { name: "סגירה" }).click();
+
+  await zipInput.setInputFiles(`${work}/zip-agent.zip`);
+  dialog = page.getByRole("dialog", { name: "התקנה מקובץ: zip-agent.zip" });
+  await dialog.getByRole("button", { name: "התקנה" }).click();
+  await expect(dialog).toContainText("Zip Agent 0.1.0 installed", { timeout: 300_000 });
+  await dialog.getByRole("button", { name: "לאייג'נטים שלי" }).click();
+  await expect(page.getByTestId("agent-zip_agent")).toContainText("Zip Agent");
+});
+
 test("agents can be stopped and their log inspected", async () => {
   await page.getByRole("button", { name: "האייג'נטים שלי" }).click();
   const card = page.getByTestId("agent-foo_agent");
   await expect(card).toContainText("פועל");
   await card.getByRole("button", { name: "יומן" }).click();
   await expect(page.getByRole("dialog", { name: "יומן – foo_agent" })).toContainText("starting");
-  await page.getByRole("button", { name: "סגירה" }).click();
+  await page.getByRole("button", { name: "סגירת החלון" }).click();
   await card.getByRole("button", { name: "עצירה" }).click();
   await expect(card).toContainText("כבוי");
 });

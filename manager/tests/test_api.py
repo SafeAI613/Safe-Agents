@@ -124,3 +124,52 @@ def test_missing_secret_is_412(settings: Any, make_agent_zip: MakeZip) -> None:
         response = client.post("/agents/foo_agent/start", headers=AUTH)
     assert response.status_code == 412
     assert "OPENROUTER_API_KEY" in response.json()["error"]["message"]
+
+
+def test_install_from_uploaded_zip(
+    client: TestClient, manager: AgentManager, make_agent_zip: MakeZip
+) -> None:
+    archive = make_agent_zip()
+    with archive.open("rb") as fh:
+        response = client.post(
+            "/agents/install-upload",
+            headers=AUTH,
+            files={"file": ("foo-agent.zip", fh, "application/zip")},
+        )
+    assert response.status_code == 202
+    name, final = read_sse(client, f"/jobs/{response.json()['id']}/events")[-1]
+    assert final["status"] == "succeeded"
+    assert list(manager.settings.downloads_dir.iterdir()) == [], "upload is deleted afterwards"
+
+
+def test_upload_must_be_a_zip_within_limits(client: TestClient, manager: AgentManager) -> None:
+    import dataclasses
+    import io
+
+    bad = client.post(
+        "/agents/install-upload",
+        headers=AUTH,
+        files={"file": ("agent.exe", io.BytesIO(b"MZ"), "application/octet-stream")},
+    )
+    assert bad.status_code == 422
+    manager.settings = dataclasses.replace(manager.settings, max_archive_bytes=10)
+    big = client.post(
+        "/agents/install-upload",
+        headers=AUTH,
+        files={"file": ("a.zip", io.BytesIO(b"0" * 100), "application/zip")},
+    )
+    assert big.status_code == 422
+    assert list(manager.settings.downloads_dir.iterdir()) == []
+
+
+def test_events_resume_after_a_dropped_connection(
+    client: TestClient, make_agent_zip: MakeZip
+) -> None:
+    job_id = client.post(
+        "/agents/install", headers=AUTH, json={"archive_path": str(make_agent_zip())}
+    ).json()["id"]
+    everything = read_sse(client, f"/jobs/{job_id}/events")
+    progress = [data for name, data in everything if name == "progress"]
+    resumed = read_sse(client, f"/jobs/{job_id}/events?since=3")
+    assert [d for n, d in resumed if n == "progress"] == progress[3:]
+    assert resumed[-1][0] == "done"

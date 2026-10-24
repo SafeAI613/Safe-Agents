@@ -44,6 +44,9 @@ JSON
 
 manager=(uv run --quiet --project "$repo/manager" safe-agents-manager --home "$work/home")
 "${manager[@]}" install "$work/foo-agent.zip"
+# A second agent, made with the developer tools, for the "install from ZIP" test.
+"${manager[@]}" new-agent "$work/zip-agent" --id zip_agent --name "Zip Agent" > /dev/null
+"${manager[@]}" package "$work/zip-agent" -o "$work/zip-agent.zip" > /dev/null
 
 export SAFE_AGENTS_SECRETS=memory
 export SAFE_AGENTS_TOKEN=e2e-token

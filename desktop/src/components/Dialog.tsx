@@ -19,7 +19,7 @@ export function Dialog({
       <div className="dialog" role="dialog" aria-modal="true" aria-label={title}>
         <header className="page-header">
           <h2>{title}</h2>
-          <button type="button" className="link" onClick={onClose} aria-label="סגירה">
+          <button type="button" className="link" onClick={onClose} aria-label="סגירת החלון">
             ✕
           </button>
         </header>

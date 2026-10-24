@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
 import { ErrorBanner } from "../components/ErrorBanner";
-import { InstallProgress } from "../components/InstallProgress";
+import { Dialog } from "../components/Dialog";
+import { InstallRun } from "../components/InstallRun";
 import { useApi } from "../lib/context";
 import { FEATURE_LABELS, PERMISSION_LABELS } from "../lib/labels";
-import type { CatalogAgent, InstallEvent, ManifestPreview } from "../lib/types";
+import type { CatalogAgent, ManifestPreview } from "../lib/types";
 import { useAsync } from "../lib/useAsync";
 
 export function StorePage({ onOpenAgents }: { onOpenAgents: () => void }) {
@@ -12,11 +13,24 @@ export function StorePage({ onOpenAgents }: { onOpenAgents: () => void }) {
   const [refresh, setRefresh] = useState(false);
   const catalog = useAsync(() => api.catalog(refresh), [api, refresh]);
   const [selected, setSelected] = useState<CatalogAgent | null>(null);
+  const [localFile, setLocalFile] = useState<File | null>(null);
 
   return (
     <section>
       <header className="page-header">
         <h1>חנות האייג'נטים</h1>
+        <label className="file-pick">
+          התקנה מקובץ ZIP
+          <input
+            type="file"
+            accept=".zip"
+            data-testid="install-zip"
+            onChange={(event) => {
+              setLocalFile(event.target.files?.[0] ?? null);
+              event.target.value = "";
+            }}
+          />
+        </label>
         <button
           type="button"
           onClick={() => {
@@ -54,6 +68,16 @@ export function StorePage({ onOpenAgents }: { onOpenAgents: () => void }) {
           </article>
         ))}
       </div>
+      {localFile && (
+        <LocalInstallDialog
+          file={localFile}
+          onClose={() => {
+            setLocalFile(null);
+            catalog.reload();
+          }}
+          onOpenAgents={onOpenAgents}
+        />
+      )}
       {selected && (
         <InstallDialog
           agent={selected}
@@ -79,77 +103,73 @@ function InstallDialog({
 }) {
   const api = useApi();
   const preview = useAsync(() => api.manifestPreview(agent.id), [api, agent.id]);
-  const [events, setEvents] = useState<InstallEvent[]>([]);
-  const [phase, setPhase] = useState<"confirm" | "installing" | "done" | "failed">("confirm");
-  const [error, setError] = useState<unknown>();
-
-  async function install() {
-    setPhase("installing");
-    setEvents([]);
-    setError(undefined);
-    try {
-      const job = await api.installFromCatalog(agent.id);
-      const finished = await api.followJob(job.id, (event) =>
-        setEvents((previous) => [...previous, event]),
-      );
-      setPhase(finished.status === "succeeded" ? "done" : "failed");
-    } catch (reason) {
-      setError(reason);
-      setPhase("failed");
-    }
-  }
+  const [confirmed, setConfirmed] = useState(false);
+  const start = useCallback(() => api.installFromCatalog(agent.id), [api, agent.id]);
 
   return (
-    <div className="dialog-backdrop" role="presentation">
-      <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="install-title">
-        <h2 id="install-title">
-          {agent.installed_version ? "עדכון" : "התקנת"} {agent.name}
-        </h2>
-        {phase === "confirm" && (
-          <>
-            <ErrorBanner error={preview.error} onRetry={preview.reload} />
-            {preview.loading && <p>טוען פרטים...</p>}
-            {preview.data && <PreviewDetails preview={preview.data} />}
-            <div className="actions">
-              <button type="button" onClick={onClose}>
-                ביטול
-              </button>
-              <button
-                type="button"
-                className="primary"
-                disabled={!preview.data}
-                onClick={() => void install()}
-              >
-                אישור והתקנה
-              </button>
-            </div>
-          </>
-        )}
-        {phase !== "confirm" && (
-          <>
-            <InstallProgress events={events} />
-            <ErrorBanner error={error} />
-            <div className="actions">
-              {phase === "done" && (
-                <button
-                  type="button"
-                  className="primary"
-                  onClick={() => {
-                    onClose();
-                    onOpenAgents();
-                  }}
-                >
-                  לאייג'נטים שלי
-                </button>
-              )}
-              <button type="button" onClick={onClose} disabled={phase === "installing"}>
-                סגירה
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
+    <Dialog
+      title={`${agent.installed_version ? "עדכון" : "התקנת"} ${agent.name}`}
+      onClose={onClose}
+    >
+      {confirmed ? (
+        <InstallRun start={start} onClose={onClose} onOpenAgents={onOpenAgents} />
+      ) : (
+        <>
+          <ErrorBanner error={preview.error} onRetry={preview.reload} />
+          {preview.loading && <p>טוען פרטים...</p>}
+          {preview.data && <PreviewDetails preview={preview.data} />}
+          <div className="actions">
+            <button type="button" onClick={onClose}>
+              ביטול
+            </button>
+            <button
+              type="button"
+              className="primary"
+              disabled={!preview.data}
+              onClick={() => setConfirmed(true)}
+            >
+              אישור והתקנה
+            </button>
+          </div>
+        </>
+      )}
+    </Dialog>
+  );
+}
+
+function LocalInstallDialog({
+  file,
+  onClose,
+  onOpenAgents,
+}: {
+  file: File;
+  onClose: () => void;
+  onOpenAgents: () => void;
+}) {
+  const api = useApi();
+  const [confirmed, setConfirmed] = useState(false);
+  const start = useCallback(() => api.installUpload(file), [api, file]);
+
+  return (
+    <Dialog title={`התקנה מקובץ: ${file.name}`} onClose={onClose}>
+      {confirmed ? (
+        <InstallRun start={start} onClose={onClose} onOpenAgents={onOpenAgents} />
+      ) : (
+        <>
+          <p className="banner banner-warn">
+            אייג'נט מקובץ לא עבר את בדיקות הקטלוג. התקינו רק קבצים ממקור שאתם סומכים עליו.
+          </p>
+          <div className="actions">
+            <button type="button" onClick={onClose}>
+              ביטול
+            </button>
+            <button type="button" className="primary" onClick={() => setConfirmed(true)}>
+              התקנה
+            </button>
+          </div>
+        </>
+      )}
+    </Dialog>
   );
 }
 

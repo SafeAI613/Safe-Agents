@@ -147,6 +147,10 @@ def create_app(manager: AgentManager, token: str) -> FastAPI:
         version = body.version if body else None
         return manager.submit_registry_install(agent_id, version).to_dict()
 
+    @router.post("/agents/install-upload", status_code=status.HTTP_202_ACCEPTED)
+    def install_upload(file: UploadFile) -> dict[str, Any]:
+        return manager.submit_uploaded_install(file.filename or "", file.file).to_dict()
+
     @router.get("/jobs/{job_id}")
     def get_job(job_id: str) -> dict[str, Any]:
         job = manager.jobs.get(job_id)
@@ -155,13 +159,14 @@ def create_app(manager: AgentManager, token: str) -> FastAPI:
         return job.to_dict()
 
     @router.get("/jobs/{job_id}/events")
-    async def job_events(job_id: str) -> StreamingResponse:
+    async def job_events(job_id: str, since: Annotated[int, Query(ge=0)] = 0) -> StreamingResponse:
+        """Progress events as SSE; ``since`` resumes after a dropped connection."""
         job = manager.jobs.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="job not found")
 
         async def stream() -> AsyncIterator[str]:
-            sent = 0
+            sent = since
             idle = 0.0
             while True:
                 done = job.done  # read before draining so no final event is missed

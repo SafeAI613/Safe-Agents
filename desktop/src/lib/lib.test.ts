@@ -137,6 +137,36 @@ describe("ManagerApi", () => {
     await expect(api.listAgents()).rejects.toMatchObject({ code: "network" });
   });
 
+  it("resumes a dropped job stream from the last event", async () => {
+    const progress = (step: string) =>
+      `event: progress\ndata: {"step":"${step}","message":"","detail":false,"timestamp":"t"}\n\n`;
+    const urls: string[] = [];
+    const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
+      urls.push(String(url));
+      if (String(url).includes("/events?since=0"))
+        return new Response(streamOf(progress("verifying")));
+      if (String(url).includes("/events?since=1")) {
+        return new Response(
+          streamOf(
+            progress("extracting"),
+            'event: done\ndata: {"id":"j","kind":"install","status":"succeeded","result":null,"error":null}\n\n',
+          ),
+        );
+      }
+      return new Response(JSON.stringify({ id: "j", kind: "install", status: "running" }));
+    });
+    const api = new ManagerApi("http://m", "t", fetchImpl as typeof fetch);
+    const seen: string[] = [];
+    const job = await api.followJob("j", (event) => seen.push(event.step), 0);
+    expect(seen).toEqual(["verifying", "extracting"]);
+    expect(job.status).toBe("succeeded");
+    expect(urls).toEqual([
+      "http://m/jobs/j/events?since=0",
+      "http://m/jobs/j",
+      "http://m/jobs/j/events?since=1",
+    ]);
+  });
+
   it("follows a job's SSE stream to the end", async () => {
     const body = streamOf(
       'event: progress\ndata: {"step":"extracting","message":"x","detail":false,"timestamp":"t"}\n\n',

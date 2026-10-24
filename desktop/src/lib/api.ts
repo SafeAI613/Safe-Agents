@@ -77,19 +77,46 @@ export class ManagerApi {
     this.request<Job>("POST", `/registry/${id}/install`, version ? { version } : {});
   getJob = (id: string) => this.request<Job>("GET", `/jobs/${id}`);
 
-  /** Stream a job's progress; resolves with the finished job. */
-  async followJob(jobId: string, onEvent: (event: InstallEvent) => void): Promise<Job> {
-    const response = await this.fetchImpl(`${this.baseUrl}/jobs/${jobId}/events`, {
-      headers: { Authorization: `Bearer ${this.token}` },
-    });
-    if (!response.ok || !response.body) {
-      throw toApiError(response.status, await response.json().catch(() => null));
+  installUpload(file: File) {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    return this.request<Job>("POST", "/agents/install-upload", form);
+  }
+
+  /**
+   * Stream a job's progress; resolves with the finished job. A dropped connection is resumed
+   * from the last event received, so long installs survive network hiccups.
+   */
+  async followJob(
+    jobId: string,
+    onEvent: (event: InstallEvent) => void,
+    retryDelayMs = 1000,
+  ): Promise<Job> {
+    let received = 0;
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      try {
+        const response = await this.fetchImpl(
+          `${this.baseUrl}/jobs/${jobId}/events?since=${received}`,
+          { headers: { Authorization: `Bearer ${this.token}` } },
+        );
+        if (!response.ok || !response.body) {
+          throw toApiError(response.status, await response.json().catch(() => null));
+        }
+        for await (const message of readSse(response.body)) {
+          if (message.event === "progress") {
+            received += 1;
+            onEvent(JSON.parse(message.data) as InstallEvent);
+          }
+          if (message.event === "done") return JSON.parse(message.data) as Job;
+        }
+      } catch (error) {
+        if (error instanceof ApiError && error.status !== 0) throw error; // e.g. unknown job
+      }
+      const job = await this.getJob(jobId).catch(() => null);
+      if (job && (job.status === "succeeded" || job.status === "failed")) return job;
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
     }
-    for await (const message of readSse(response.body)) {
-      if (message.event === "progress") onEvent(JSON.parse(message.data) as InstallEvent);
-      if (message.event === "done") return JSON.parse(message.data) as Job;
-    }
-    return this.getJob(jobId); // stream ended early: ask for the final state
+    throw new ApiError("network", "lost connection to the install progress", 0);
   }
 
   // settings
