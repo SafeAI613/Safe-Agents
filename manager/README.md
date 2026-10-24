@@ -61,7 +61,7 @@ uv run safe-agents-manager validate-registry registry.json --base base.json --in
 | POST | `/agents/install` | `{"archive_path", "sha256"?}` ← 202 + job |
 | GET | `/registry?refresh=false` | הקטלוג + `installed_version` + `update_available` + `stale` |
 | POST | `/registry/{id}/install` | `{"version"?}` ← 202 + job (התקנה או עדכון) |
-| GET | `/jobs/{id}` · `/jobs/{id}/events` | סטטוס / SSE (`progress`, `done`) |
+| GET | `/jobs/{id}` · `/jobs/{id}/events?since=N` | סטטוס / SSE (`progress`, `done`); `since` ממשיך אחרי ניתוק |
 | POST | `/agents/{id}/start` · `/stop` | הפעלה (← `url`, `graph_id`) / עצירה |
 | GET | `/agents/{id}/logs?tail=200` | סוף הלוג |
 | DELETE | `/agents/{id}` | הסרה (כולל המפתחות של האייג'נט) |
@@ -73,6 +73,8 @@ uv run safe-agents-manager validate-registry registry.json --base base.json --in
 | GET | `/settings/openrouter-key/status` · `/models/pricing` | שימוש ומגבלה בחשבון · מחירי מודלים (מטמון 24 שעות) |
 | POST/GET | `/usage` | רישום טוקנים לפי הודעה (ללא כפילויות) · סיכום עלויות |
 | POST | `/exports` | שמירת שיחה לתיקיית ההורדות |
+| POST | `/agents/install-upload` | התקנה מקובץ ZIP (multipart) ← 202 + job |
+| GET | `/about` · `/logs/manager` | גרסה ותיקיות · יומן ה-Manager (`logs/manager.log`, עם רוטציה) |
 
 שגיאות מוחזרות בפורמט אחיד: `{"error": {"code": "missing_secret", "message": "..."}}`.
 
@@ -92,6 +94,7 @@ uv run pytest -m integration    # uv + langgraph dev אמיתיים עם example
 | `secret_store.py` | OS keychain (keyring), טווח גלובלי/אייג'נט |
 | `openrouter.py` · `usage.py` | בדיקת מפתח ומחירים · ספר עלויות |
 | `files.py` | העלאות, ייצוא, README |
+| `devtools.py` · `templates/agent/` | `new-agent` · `check` · `package` |
 | `lifecycle.py` · `orphans.py` · `winjob.py` | עצירה כשהאפליקציה נסגרת · PID registry · Job Object ב-Windows |
 | `registry.py` | פענוח ואימות הקטלוג, לקוח עם מטמון ETag ו-fallback offline |
 | `download.py` | הורדת https עם רשימת hosts, בדיקת כל redirect, מגבלת גודל, sha256 |

@@ -4,6 +4,7 @@
 
 - [מסמך אפיון ותכנון](docs/SPEC.md)
 - [חוזה אייג'נט למפתחים](docs/AGENT_CONTRACT.md)
+- [מדריך למשתמש](docs/USER_GUIDE.md)
 - [JSON Schema למניפסט](schemas/manifest.schema.json) · [JSON Schema לקטלוג](schemas/registry.schema.json)
 
 | תיקייה | תוכן | שלב |
