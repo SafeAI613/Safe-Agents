@@ -35,6 +35,8 @@ SAFE_AGENTS_TOKEN=... uv run safe-agents-manager serve --port 0
 
 # בדיקת registry.json (ה-CI של ריפו הקטלוג מריץ את זה על כל PR)
 uv run safe-agents-manager validate-registry registry.json --base base.json --install
+# + בדיקת תחום: האייג'נט מסרב לשאלות מחוץ לתפקיד (ה-workflow scope-gate)
+OPENROUTER_API_KEY=... uv run safe-agents-manager validate-registry registry.json --base base.json --scope
 ```
 
 `serve --exit-on-stdin-close --parent-pid <pid>` (כך מפעיל אותו ה-Desktop) עוצר את כל האייג'נטים ויוצא כש-stdin נסגר, כשמתקבלת השורה `shutdown`, או כשתהליך האב נעלם.
@@ -47,6 +49,7 @@ uv run safe-agents-manager validate-registry registry.json --base base.json --in
 | `SAFE_AGENTS_UV` | נתיב ל-uv (ברירת מחדל: ליד קובץ ההפעלה, ואז PATH) |
 | `SAFE_AGENTS_TOKEN` | הטוקן שה-API דורש |
 | `SAFE_AGENTS_REGISTRY_URL` | כתובת הקטלוג (https), או נתיב לקובץ מקומי בזמן פיתוח |
+| `SAFE_AGENTS_POLICY_URL` | כתובת מדיניות התוכן (ברירת מחדל: `policy.json` ליד הקטלוג) |
 | `SAFE_AGENTS_SECRETS` | `memory` – סודות בזיכרון במקום OS keychain (בדיקות/CI) |
 | `SAFE_AGENTS_CORS_ORIGINS` | origins נוספים מלבד ה-webview (למשל `http://localhost:1420` בפיתוח) |
 | `SAFE_AGENTS_OPENROUTER_URL` · `SAFE_AGENTS_EXPORT_DIR` | החלפת כתובת OpenRouter ותיקיית הייצוא (בדיקות E2E) |
@@ -62,7 +65,9 @@ uv run safe-agents-manager validate-registry registry.json --base base.json --in
 | GET | `/registry?refresh=false` | הקטלוג + `installed_version` + `update_available` + `stale` |
 | POST | `/registry/{id}/install` | `{"version"?}` ← 202 + job (התקנה או עדכון) |
 | GET | `/jobs/{id}` · `/jobs/{id}/events?since=N` | סטטוס / SSE (`progress`, `done`); `since` ממשיך אחרי ניתוק |
-| POST | `/agents/{id}/start` · `/stop` | הפעלה (← `url`, `graph_id`) / עצירה |
+| POST | `/agents/{id}/start` · `/stop` | הפעלה (← `graph_id`, `proxy_path`) / עצירה |
+| * | `/agents/{id}/lg/...` | ה-API של LangGraph דרך שומר התוכן; הטוקן של האייג'נט לא יוצא מהמנהל |
+| GET | `/policy` | מדיניות התוכן הפעילה (`source`: catalog / cache / bundled) |
 | GET | `/agents/{id}/logs?tail=200` | סוף הלוג |
 | DELETE | `/agents/{id}` | הסרה (כולל המפתחות של האייג'נט) |
 | GET/PUT | `/agents/{id}/secrets` | שדות המפתחות (env + MCP) עם `set`; עדכון (ערך ריק = מחיקה) |

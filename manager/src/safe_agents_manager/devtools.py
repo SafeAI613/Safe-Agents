@@ -27,7 +27,9 @@ from .manifest import (
     load_manifest,
     validate_layout,
 )
-from .secret_store import StaticSecretProvider
+from .policy import ContentPolicy
+from .scope_check import ScopeReport, check_installed_agent
+from .secret_store import EnvSecretProvider, StaticSecretProvider
 
 AGENT_ID = re.compile(r"^[a-z][a-z0-9_]{2,63}$")
 # Never shipped in a package. Names that are only junk at the agent's top level (a
@@ -175,17 +177,29 @@ def check_agent(directory: Path) -> tuple[AgentManifest | None, list[Finding]]:
     return manifest, findings
 
 
-def install_check(directory: Path, settings: Settings) -> None:
-    """Package and install the agent into a throw-away folder with uv + smoke test."""
+def install_check(
+    directory: Path,
+    settings: Settings,
+    scope: tuple[str, ContentPolicy] | None = None,
+) -> ScopeReport | None:
+    """Package and install the agent into a throw-away folder with uv + smoke test.
+
+    With ``scope`` (OpenRouter key, policy) the agent is then started and asked questions
+    outside its task, with the secrets it declares taken from the environment.
+    """
     from .service import AgentManager
 
     # ignore_cleanup_errors: on Windows a just-stopped server may hold a file for a moment.
     with tempfile.TemporaryDirectory(prefix="agent-check-", ignore_cleanup_errors=True) as tmp:
         archive, _ = package_agent(directory, Path(tmp) / "agent.zip")
         scratch = dataclasses.replace(settings, home=Path(tmp) / "home")
-        manager = AgentManager(scratch, StaticSecretProvider({}))
+        manager = AgentManager(scratch, EnvSecretProvider() if scope else StaticSecretProvider({}))
         try:
-            manager.installer.install_archive(archive)
+            agent = manager.installer.install_archive(archive)
+            if scope is None:
+                return None
+            api_key, policy = scope
+            return check_installed_agent(manager, agent.id, api_key, policy)
         finally:
             manager.shutdown()
 

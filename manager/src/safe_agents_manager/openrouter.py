@@ -88,6 +88,11 @@ class OpenRouterClient:
         )
         return prices
 
+    def cached_pricing(self) -> Pricing:
+        """Prices known without a network call (possibly stale or empty)."""
+        cached = self._read_cache()
+        return cached[1] if cached else {}
+
     def _read_cache(self) -> tuple[float, Pricing] | None:
         try:
             data = json.loads(self._pricing_file.read_text(encoding="utf-8"))

@@ -25,10 +25,12 @@ import httpx
 from .archive import safe_extract
 from .config import Settings
 from .download import download_file, fetch_bytes
-from .errors import ManagerError
+from .errors import ManagerError, ScopeCheckError
 from .manifest import AgentManifest, load_manifest, validate_layout
+from .policy import ContentPolicy
 from .registry import RegistryEntry, RegistryVersion, parse_registry
-from .secret_store import StaticSecretProvider
+from .scope_check import check_installed_agent
+from .secret_store import EnvSecretProvider, StaticSecretProvider
 
 MAX_MANIFEST_BYTES = 1024 * 1024
 
@@ -175,21 +177,42 @@ class RegistryValidator:
         return []
 
 
-def real_install_check(settings: Settings) -> InstallCheck:
-    """Install into a temporary home with the real uv environment and smoke test."""
+@dataclass(frozen=True)
+class ScopeOptions:
+    api_key: str
+    policy: ContentPolicy
+    report_dir: Path | None = None
+
+
+def real_install_check(settings: Settings, scope: ScopeOptions | None = None) -> InstallCheck:
+    """Install into a temporary home with the real uv environment and smoke test.
+
+    With ``scope``, the installed agent is also started and must decline questions outside
+    its task (see scope_check.py); it then gets the secrets it declares from the environment.
+    """
     from .service import AgentManager
 
     def check(archive: Path, entry: RegistryEntry, item: RegistryVersion) -> None:
-        with tempfile.TemporaryDirectory(prefix="registry-install-") as home:
+        with tempfile.TemporaryDirectory(
+            prefix="registry-install-", ignore_cleanup_errors=True
+        ) as home:
             scratch = dataclasses.replace(settings, home=Path(home))
-            manager = AgentManager(scratch, StaticSecretProvider({}))
+            secrets = EnvSecretProvider() if scope else StaticSecretProvider({})
+            manager = AgentManager(scratch, secrets)
             try:
-                manager.installer.install_archive(
+                agent = manager.installer.install_archive(
                     archive,
                     expected_sha256=item.sha256,
                     expected_agent_id=entry.id,
                     expected_version=item.version,
                 )
+                if scope is not None:
+                    report = check_installed_agent(manager, agent.id, scope.api_key, scope.policy)
+                    print(report.summary(), flush=True)
+                    if scope.report_dir is not None:
+                        report.write_csv(scope.report_dir / f"{entry.id}-{item.version}.csv")
+                    if report.problem:
+                        raise ScopeCheckError(report.problem)
             finally:
                 manager.shutdown()
 

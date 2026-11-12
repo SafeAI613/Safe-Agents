@@ -1,0 +1,65 @@
+name: scope-gate
+
+# Checks that the agents a pull request adds decline questions outside their task.
+# Run it by hand (Actions → scope-gate → Run workflow) after reading the agent's code: it
+# starts that code with a real OpenRouter key.
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "Pull request number"
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  MANAGER_REF: main
+
+jobs:
+  scope:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # Settings → Environments → scope-gate: require a maintainer's approval and store
+    # OPENROUTER_GATE_KEY there – a dedicated key with a low credit limit, because the
+    # agent under test can read it.
+    environment: scope-gate
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install the validator
+        run: >
+          uv tool install
+          "safe-agents-manager @ git+https://github.com/SafeAI613/Safe-Agents@${MANAGER_REF}#subdirectory=manager"
+
+      - name: Take the pull request's catalog, with the policy of main
+        env:
+          PR: ${{ inputs.pr }}
+        run: |
+          case "$PR" in ''|*[!0-9]*) echo "::error::pr must be a number"; exit 1;; esac
+          git fetch --no-tags origin "pull/${PR}/head:pr-head"
+          mkdir -p "$RUNNER_TEMP/check"
+          git show pr-head:registry.json > "$RUNNER_TEMP/check/registry.json"
+          git show HEAD:registry.json > "$RUNNER_TEMP/base.json"
+          # The pull request must not be able to weaken the rules it is checked against.
+          cp policy.json "$RUNNER_TEMP/check/policy.json"
+
+      - name: Install the new versions and ask them questions outside their task
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_GATE_KEY }}
+        run: >
+          safe-agents-manager --home "$RUNNER_TEMP/home"
+          validate-registry "$RUNNER_TEMP/check/registry.json" --base "$RUNNER_TEMP/base.json"
+          --scope --report-dir "$RUNNER_TEMP/scope-reports"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scope-reports
+          path: ${{ runner.temp }}/scope-reports
+          if-no-files-found: ignore

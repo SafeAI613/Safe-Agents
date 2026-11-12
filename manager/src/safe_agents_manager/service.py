@@ -428,11 +428,8 @@ class AgentManager:
     ) -> None:
         """Cost of a content-guard check, counted with the conversation it protected."""
         item = UsageItem(f"guard:{uuid4().hex}", model, input_tokens, output_tokens)
-        try:
-            pricing = self.pricing()
-        except ManagerError:
-            pricing = {}
-        self.usage.record(agent_id, thread_id, [item], pricing)
+        # Called from the event loop: use known prices only, never wait on the network.
+        self.usage.record(agent_id, thread_id, [item], self.openrouter.cached_pricing())
 
     def record_usage(self, agent_id: str, thread_id: str, items: list[UsageItem]) -> int:
         self.get_agent(agent_id)

@@ -2,10 +2,10 @@ name: validate-registry
 
 on:
   pull_request:
-    paths: ["registry.json"]
+    paths: ["registry.json", "policy.json"]
   push:
     branches: [main]
-    paths: ["registry.json"]
+    paths: ["registry.json", "policy.json"]
 
 # The check installs and starts agent code from the PR, so it runs with a read-only token
 # and no secrets. Never switch this to `pull_request_target`.
@@ -46,7 +46,7 @@ jobs:
               || rm -f "$RUNNER_TEMP/base.json"
           fi
 
-      - name: Validate (schema, immutability, download, sha256, install + smoke test)
+      - name: Validate (schemas, immutability, download, sha256, install + smoke test)
         run: >
           safe-agents-manager --home "$RUNNER_TEMP/home"
           validate-registry registry.json --base "$RUNNER_TEMP/base.json" --install

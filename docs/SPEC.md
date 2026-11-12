@@ -25,21 +25,38 @@
 ┌────────────────────────── Tauri App ───────────────────────────┐
 │  React UI (Vite + TS)                                          │
 │   ├─ Store (קטלוג)  ├─ My Agents  ├─ Chat (useStream)  ├─ Settings │
-│        │ HTTP (localhost, token)          │ HTTP/SSE            │
-│        ▼                                   ▼                    │
+│        │ HTTP + SSE (localhost, token) – גם הצ'אט   │
+│        ▼                                                        │
 │  Rust core (Tauri)                    langgraph dev :2101       │
 │   ├─ token + סטטוס ל-UI                langgraph dev :2102 ...  │
-│   └─ spawn/kill sidecar                   ▲                     │
-│        ▼                                  │ spawn per agent      │
+│   └─ spawn/kill sidecar                   ▲  (token של המנהל בלבד)│
+│        ▼                                  │ spawn + proxy        │
 │  Agent Manager (Python FastAPI sidecar, PyInstaller) ───────────┘
-│   ├─ Registry client   ├─ Installer (download/verify/venv)       │
+│   ├─ Registry + policy client  ├─ Installer (download/verify/venv)│
 │   ├─ Process supervisor (ports, health, logs)                    │
+│   ├─ Content guard: proxy לכל אייג'נט + בדיקת תחום ומדיניות       │
 │   └─ Usage/Cost ledger (SQLite)                                  │
 └────────────────────────────────────────────────────────────────┘
           │ HTTPS                                   │ HTTPS
           ▼                                         ▼
-  GitHub: registry.json + releases           openrouter.ai / LangSmith
+  GitHub: registry.json + policy.json        openrouter.ai / LangSmith
+          + releases
 ```
+
+### שומר התוכן (Content guard)
+הממשק לא מדבר ישירות עם שרתי האייג'נטים. המנהל משמש reverse proxy ל-API של LangGraph
+(`/agents/{id}/lg/...`), ומפתח הגישה לשרת האייג'נט לא יוצא ממנו.
+
+| מה עובר | מה נבדק | מה קורה בחסימה |
+|---|---|---|
+| הודעת משתמש (`run.start`) | התאמה לתפקיד האייג'נט (מהמניפסט) + `policy.json` | ההודעה לא נשלחת לאייג'נט; הממשק מציג למה |
+| טקסט של האייג'נט (סטרימינג) | `policy.json` | ההודעה מוחזקת עד שהיא שלמה ונבדקה; טקסט חסום מוחלף בהודעה קבועה |
+| `values`, בקשות אישור, מצב שיחה, היסטוריה | `policy.json` | אותו דבר – גם בפתיחה מחדש של שיחה |
+
+- מודל בדיקה קבוע אחד (`classifier_model`), טמפרטורה 0. תוצאות נשמרות לפי hash של הטקסט והכללים.
+- **Fail closed:** אם הבדיקה לא זמינה (אין רשת, אין קרדיט) – ההודעה לא נשלחת והתשובה לא מוצגת.
+- `policy.json` נמשך מריפו הקטלוג כמו הקטלוג (ETag, עותק שמור), ועם ברירת מחדל מובנית.
+- בקטלוג: `scope-gate` שולח לאייג'נט שאלות מחוץ לתחום ודורש שיעור סירוב מינימלי.
 
 **עקרון:** Rust מינימלי (חלון, הרמת sidecar, token). המפתחות נשמרים ב-OS keychain דרך ספריית `keyring` של Python בתוך ה-Manager. כל הלוגיקה ב-Python (Agent Manager) – שפה מוכרת לסטודנטים, ו-`uv` קל לשליטה ממנה.
 
@@ -145,7 +162,9 @@ const stream = useStream({ apiUrl: `http://127.0.0.1:${port}`, assistantId: grap
 | POST | `/agents/{id}/install` · `/update` | התחלת job |
 | GET | `/jobs/{job_id}/events` | SSE התקדמות |
 | DELETE | `/agents/{id}` | הסרה |
-| POST | `/agents/{id}/start` · `/stop` | ← `{port, graph_id}` |
+| POST | `/agents/{id}/start` · `/stop` | ← `{graph_id, proxy_path}` |
+| * | `/agents/{id}/lg/...` | ה-API של LangGraph דרך שומר התוכן (הצ'אט) |
+| GET | `/policy` | מדיניות התוכן הפעילה ומקורה |
 | GET | `/agents/{id}/logs?tail=` | לוגים |
 | PUT | `/agents/{id}/secrets` | סודות MCP/אופציונליים (נשמרים ב-OS keychain) |
 | POST | `/usage` · GET `/usage?agent=` | רישום ושליפת עלויות |
@@ -216,4 +235,6 @@ Safe-Agents/
 | היסטוריית שיחות | לא נדרש | רשימת שיחות לכל אייג'נט; המצב מועתק לגרסה החדשה בעדכון | שימוש אמיתי דורש לחזור לשיחות; `langgraph dev` שומר בתיקיית העבודה |
 | התקנה מקובץ | – | ZIP מהאפליקציה, עם אזהרה | בדיקה עצמית למפתחים והפצה פנימית |
 | כלי מפתח | – | `new-agent` · `check` · `package` | הדרך הקצרה מאייג'נט לפרסום בקטלוג, עם zip שחוזר על אותו hash |
+| הגבלת תוכן | באחריות כל אייג'נט | שומר תוכן בפלטפורמה (proxy) + `policy.json` בקטלוג + `scope-gate` | אי אפשר לסמוך על קוד של מפתחים: הפלטפורמה צריכה לאכוף תחום ומדיניות בעצמה |
+| סטרימינג טקסט | מילה אחרי מילה | כל הודעה מוצגת אחרי שנבדקה | אסור שטקסט חסום יופיע ולו לרגע; שלבי הריצה עדיין מוצגים בזמן אמת |
 

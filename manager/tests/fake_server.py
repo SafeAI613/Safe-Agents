@@ -106,6 +106,11 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, {"type": "success", "id": body.get("id"), "result": {}})
         elif re.fullmatch(r"/threads/[^/]+/stream/events", self.path):
             self._events()
+        elif self.path == "/runs/wait":
+            # Scope check: declines everything except questions that mention a poem.
+            question = body["input"]["messages"][-1]["content"]
+            reply = "Here is a poem: lorem." if "poem" in question else "I only help with foo."
+            self._send(200, {"messages": [{"type": "ai", "content": reply}]})
         elif self.path == "/threads/search":
             self._send(200, [{"thread_id": "t1", "values": {"messages": _messages()}}])
         elif self.path == "/assistants/search":

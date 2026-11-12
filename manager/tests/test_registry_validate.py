@@ -19,6 +19,8 @@ from safe_agents_manager.errors import InstallError
 from safe_agents_manager.registry import RegistryEntry, RegistryVersion
 from safe_agents_manager.registry_validate import RegistryValidator
 
+REPO_ROOT = Path(__file__).parents[2]
+
 
 def write(path: Path, doc: dict[str, Any]) -> Path:
     path.write_text(json.dumps(doc))
@@ -103,3 +105,26 @@ def test_cli_reports_github_annotations(
 
     good = write(tmp_path / "g.json", registry_doc([]))
     assert main(["--home", str(tmp_path / "h"), "validate-registry", str(good)]) == 0
+
+
+def test_cli_checks_the_policy_next_to_the_registry(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    good = write(tmp_path / "registry.json", registry_doc([]))
+    write(tmp_path / "policy.json", {"policy_version": 1, "blocked_topics": []})
+    assert main(["--home", str(tmp_path / "h"), "validate-registry", str(good)]) == 1
+    assert "policy.json" in capsys.readouterr().err
+
+    (tmp_path / "policy.json").write_text(
+        (REPO_ROOT / "registry-template" / "policy.json").read_text("utf-8"), "utf-8"
+    )
+    assert main(["--home", str(tmp_path / "h"), "validate-registry", str(good)]) == 0
+
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    assert main(["--home", str(tmp_path / "h"), "validate-registry", str(good), "--scope"]) == 2
+
+
+def test_catalog_template_policy_is_the_bundled_default() -> None:
+    bundled = Path(__file__).parents[1] / "src/safe_agents_manager/schemas/policy.default.json"
+    template = REPO_ROOT / "registry-template" / "policy.json"
+    assert json.loads(template.read_text("utf-8")) == json.loads(bundled.read_text("utf-8"))

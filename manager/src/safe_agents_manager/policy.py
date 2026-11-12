@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from functools import cache
@@ -100,12 +101,35 @@ class PolicyClient:
         self._ttl_s = ttl_s
         self._current: ContentPolicy | None = None
         self._checked = 0.0
+        self._refreshing = threading.Lock()
 
     def get(self, *, refresh: bool = False) -> ContentPolicy:
         if self._current is not None and not refresh and time.time() - self._checked < self._ttl_s:
             return self._current
         self._current = self._load()
         self._checked = time.time()
+        return self._current
+
+    def current(self) -> ContentPolicy:
+        """The policy without waiting on the network (for the guard, inside the event loop).
+
+        Before the first fetch this is the cached or bundled copy; a stale policy is
+        refreshed in a background thread.
+        """
+        if self._current is None:
+            self._current = self._read_cache() or bundled_policy()
+        if time.time() - self._checked >= self._ttl_s and self._refreshing.acquire(False):
+            self._checked = time.time()  # one refresh at a time, and not on every call
+
+            def refresh() -> None:
+                try:
+                    self._current = self._load()
+                except Exception:  # keep the guard running on the policy it has
+                    log.exception("could not refresh the content policy")
+                finally:
+                    self._refreshing.release()
+
+            threading.Thread(target=refresh, name="policy-refresh", daemon=True).start()
         return self._current
 
     def _load(self) -> ContentPolicy:

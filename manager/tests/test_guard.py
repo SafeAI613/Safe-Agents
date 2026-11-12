@@ -521,3 +521,133 @@ def test_policy_endpoint(proxied: tuple[TestClient, Any], manager: AgentManager)
     )
     policy = client.get("/policy", headers=AUTH).json()
     assert policy["source"] == "bundled" and policy["blocked_topics"]
+
+
+# -- the scope check (catalog gate) ---------------------------------------------------------
+
+
+class ScopeJudge(Judge):
+    """Probes with "baz" are off-task; an answer with "only help" declined."""
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        text = body["messages"][1]["content"]
+        if text.startswith("QUESTION"):
+            self.requests.append(body)
+            declined = "only help" in text.split("ANSWER:")[1]
+            answer = json.dumps({"declined": declined})
+            return httpx.Response(200, json={"choices": [{"message": {"content": answer}}]})
+        return super().handler(request)
+
+
+def scope_policy(probes: list[str], rate: float = 0.8) -> Any:
+    data = policy_doc()
+    data.update(scope_probes=probes, min_refusal_rate=rate)
+    return parse_policy(data, "catalog")
+
+
+def scope_report(
+    manager: AgentManager,
+    make_agent_zip: Callable[..., Path],
+    tmp_path: Path,
+    policy: Any,
+    judge: Judge | None = None,
+) -> Any:
+    from safe_agents_manager.scope_check import run_scope_check
+
+    agent = manager.install_archive(make_agent_zip())
+    handle = manager.start(agent.id)
+    guard = ContentGuard(
+        tmp_path / "scope.sqlite",
+        "https://openrouter.test/api/v1",
+        api_key=lambda: "sk-test",
+        policy=lambda: policy,
+        http=httpx.AsyncClient(transport=httpx.MockTransport((judge or ScopeJudge()).handler)),
+    )
+    return run_scope_check(handle, agent.manifest, policy, guard)
+
+
+OFF_TASK = [f"baz question {i}" for i in range(5)]
+
+
+def test_scope_check_passes_when_the_agent_declines(
+    manager: AgentManager, make_agent_zip: Callable[..., Path], tmp_path: Path
+) -> None:
+    report = scope_report(
+        manager, make_agent_zip, tmp_path, scope_policy([*OFF_TASK, "lorem in task"])
+    )
+    assert report.problem is None
+    assert report.refusal_rate == 1.0
+    assert [r.outside_task for r in report.results] == [True] * 5 + [False]
+    csv_path = tmp_path / "out" / "scope.csv"
+    report.write_csv(csv_path)
+    rows = csv_path.read_text("utf-8").splitlines()
+    assert rows[0] == "question,outside_task,declined,seconds,answer,error"
+    assert rows[1].startswith("baz question 0,True,True,")
+    assert "skip (inside the task)" in report.summary()
+
+
+def test_scope_check_fails_when_the_agent_answers_off_task(
+    manager: AgentManager, make_agent_zip: Callable[..., Path], tmp_path: Path
+) -> None:
+    probes = [*OFF_TASK[:3], "baz poem 1", "baz poem 2"]
+    report = scope_report(manager, make_agent_zip, tmp_path, scope_policy(probes))
+    assert report.refusal_rate == pytest.approx(0.6)
+    assert report.problem is not None and "60%" in report.problem
+    assert "ANSWERED" in report.summary()
+
+
+def test_scope_check_needs_enough_off_task_probes(
+    manager: AgentManager, make_agent_zip: Callable[..., Path], tmp_path: Path
+) -> None:
+    probes = [*OFF_TASK[:4], "lorem in task"]
+    report = scope_report(manager, make_agent_zip, tmp_path, scope_policy(probes))
+    assert report.problem is not None and "scope_probes" in report.problem
+
+
+def test_scope_check_fails_when_it_cannot_judge(
+    manager: AgentManager, make_agent_zip: Callable[..., Path], tmp_path: Path
+) -> None:
+    report = scope_report(
+        manager, make_agent_zip, tmp_path, scope_policy(OFF_TASK), judge=Judge(status=500)
+    )
+    assert report.problem is not None and "could not judge" in report.problem
+
+
+def test_a_run_that_ends_mid_message_releases_what_is_held() -> None:
+    message = ai_message("lorem bar")
+    cancelled = event(40, "lifecycle", {"event": "cancelled"})
+    after = event(41, "lifecycle", {"event": "running"})
+
+    async def collect() -> list[list[str]]:
+        stream_filter = StreamFilter(fake_check)
+        released = []
+        for item in [*message[:3], cancelled, after]:
+            released.append(await stream_filter.feed(SseEvent(item)))
+        return released
+
+    released = run(collect())
+    assert released[:3] == [[], [], []]  # held while the message is open
+    assert len(released[3]) == 4 and "bar" not in "".join(released[3])
+    assert len(released[4]) == 1  # the stream goes on for the next run
+
+
+def test_policy_for_the_guard_never_waits_on_the_network(tmp_path: Path) -> None:
+    import threading
+
+    gate = threading.Event()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        gate.wait(5)
+        return httpx.Response(200, json=policy_doc("foo/fresh"))
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    hosts = frozenset({"raw.githubusercontent.com"})
+    policies = PolicyClient(POLICY_URL, tmp_path, client, hosts, ttl_s=60)
+    assert policies.current().source == "bundled"  # returns at once; the fetch runs behind
+    gate.set()
+    for _ in range(100):
+        if policies.current().classifier_model == "foo/fresh":
+            break
+        threading.Event().wait(0.05)
+    assert policies.current().classifier_model == "foo/fresh"

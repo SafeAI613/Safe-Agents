@@ -96,3 +96,8 @@ class UpstreamError(ManagerError):
 class InvalidRequestError(ManagerError):
     code = "invalid_request"
     http_status = 422
+
+
+class ScopeCheckError(ManagerError):
+    code = "scope_check_failed"
+    http_status = 422

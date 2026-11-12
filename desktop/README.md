@@ -6,7 +6,7 @@
 
 ```
 React (webview) ──HTTP + token──▶ Agent Manager (sidecar) ──spawn──▶ langgraph dev לכל אייג'נט
-       └──────────── useStream + token לכל הפעלה ─────────────────────▲
+  useStream ──▶ /agents/{id}/lg ──▶ שומר תוכן (proxy) ──token של האייג'נט──▲
 Rust: מפעיל את ה-Manager עם token אקראי, מעביר ל-UI כתובת+token, ובסגירה מבקש shutdown מסודר
 ```
 
@@ -79,11 +79,12 @@ npx tauri build --config src-tauri/tauri.release.conf.json
 
 ## אבטחה
 
-| שכבה           | מה נעשה                                                                            |
-| -------------- | ---------------------------------------------------------------------------------- |
-| Manager API    | `127.0.0.1` בלבד, Bearer token אקראי מה-Rust, CORS רק ל-webview                    |
-| שרתי אייג'נטים | token חדש לכל הפעלה (`platform_auth.py` שנוצר אוטומטית), CORS רק ל-webview         |
-| Webview        | CSP: חיבור רק ל-`127.0.0.1`; אין ל-JS הרשאות shell (רק `core:default`)             |
-| מפתחות         | OS keychain; ה-API לעולם לא מחזיר ערך של מפתח                                      |
-| קבצים          | שמות מנוקים, סיומות לפי המניפסט, מגבלת גודל, תיקיית `inbox` של האייג'נט            |
-| תהליכים        | Job Object (Windows), PID registry (macOS/Linux), עצירה כשהאפליקציה נסגרת או קורסת |
+| שכבה           | מה נעשה                                                                              |
+| -------------- | ------------------------------------------------------------------------------------ |
+| Manager API    | `127.0.0.1` בלבד, Bearer token אקראי מה-Rust, CORS רק ל-webview                      |
+| שרתי אייג'נטים | token חדש לכל הפעלה (`platform_auth.py`), ידוע רק למנהל; הממשק עובר דרך ה-proxy      |
+| תוכן           | שומר תוכן במנהל: תחום האייג'נט + `policy.json` לכל הודעה ותשובה (ראו `docs/SPEC.md`) |
+| Webview        | CSP: חיבור רק ל-`127.0.0.1`; אין ל-JS הרשאות shell (רק `core:default`)               |
+| מפתחות         | OS keychain; ה-API לעולם לא מחזיר ערך של מפתח                                        |
+| קבצים          | שמות מנוקים, סיומות לפי המניפסט, מגבלת גודל, תיקיית `inbox` של האייג'נט              |
+| תהליכים        | Job Object (Windows), PID registry (macOS/Linux), עצירה כשהאפליקציה נסגרת או קורסת   |

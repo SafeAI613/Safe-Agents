@@ -97,7 +97,7 @@ def create_app(manager: AgentManager, token: str, guard: ContentGuard | None = N
         manager.settings.db_path,
         manager.settings.openrouter_url,
         api_key=lambda: manager.secrets.get("OPENROUTER_API_KEY"),
-        policy=manager.content_policy,
+        policy=manager.policy.current,
         on_usage=manager.record_guard_usage,
     )
     proxy = AgentProxy(manager, guard)

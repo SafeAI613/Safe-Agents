@@ -20,6 +20,7 @@ from . import __version__
 from .config import Settings
 from .errors import ManagerError
 from .installer import InstallEvent, InstallStep
+from .policy import ContentPolicy
 from .secret_store import (
     EnvSecretProvider,
     KeyringBackend,
@@ -61,6 +62,13 @@ def _build_parser() -> argparse.ArgumentParser:
     validate.add_argument(
         "--install", action="store_true", help="also install new versions (implies --deep)"
     )
+    validate.add_argument(
+        "--scope",
+        action="store_true",
+        help="also check that new versions decline questions outside their task "
+        "(implies --install; needs OPENROUTER_API_KEY; policy.json next to the registry)",
+    )
+    validate.add_argument("--report-dir", type=Path, help="write each scope check as CSV here")
 
     uninstall = sub.add_parser("uninstall", help="remove an installed agent")
     uninstall.add_argument("agent_id")
@@ -78,6 +86,13 @@ def _build_parser() -> argparse.ArgumentParser:
     check.add_argument(
         "--install", action="store_true", help="also install it with uv and start it once"
     )
+    check.add_argument(
+        "--scope",
+        action="store_true",
+        help="also check that it declines questions outside its task, like the catalog does "
+        "(implies --install; needs OPENROUTER_API_KEY)",
+    )
+    check.add_argument("--report", type=Path, help="write the scope check as CSV here")
 
     package = sub.add_parser("package", help="zip an agent for a release and print its entry")
     package.add_argument("directory", type=Path)
@@ -135,13 +150,36 @@ def _catalog(manager: AgentManager, refresh: bool) -> None:
 def _validate_registry(settings: Settings, args: argparse.Namespace) -> int:
     import httpx
 
-    from .registry_validate import RegistryValidator, real_install_check
+    from .errors import RegistryError
+    from .policy import bundled_policy, parse_policy
+    from .registry_validate import RegistryValidator, ScopeOptions, real_install_check
+
+    # The catalog's policy sits next to its registry.json; a broken one fails the check.
+    policy = None
+    policy_path = args.registry.resolve().parent / "policy.json"
+    if policy_path.is_file():
+        try:
+            policy = parse_policy(json.loads(policy_path.read_text("utf-8")), "catalog")
+        except (ValueError, RegistryError) as exc:
+            print(f"error: {policy_path.name}: {exc}", file=sys.stderr)
+            return 1
 
     with httpx.Client(timeout=settings.http_timeout_s) as client:
+        scope = None
+        if args.scope:
+            api_key = os.environ.get("OPENROUTER_API_KEY")
+            if not api_key:
+                print("error: --scope needs OPENROUTER_API_KEY", file=sys.stderr)
+                return 2
+            if policy is None:
+                print("warning: no policy.json next to the registry; using the default")
+                policy = bundled_policy()
+            scope = ScopeOptions(api_key, policy, args.report_dir)
+        install = args.install or args.scope
         validator = RegistryValidator(
-            settings, client, real_install_check(settings) if args.install else None
+            settings, client, real_install_check(settings, scope) if install else None
         )
-        findings = validator.validate(args.registry, base=args.base, deep=args.deep or args.install)
+        findings = validator.validate(args.registry, base=args.base, deep=args.deep or install)
     github = os.environ.get("GITHUB_ACTIONS") == "true"
     for finding in findings:
         # GitHub Actions turns ::error lines into annotations on the PR.
@@ -166,9 +204,23 @@ def _developer_command(settings: Settings, args: argparse.Namespace) -> int:
         if manifest is None or any(f.level == "error" for f in findings):
             return 1
         if args.command == "check":
-            if args.install:
+            scope = None
+            if args.scope:
+                api_key = os.environ.get("OPENROUTER_API_KEY")
+                if not api_key:
+                    print("error: --scope needs OPENROUTER_API_KEY", file=sys.stderr)
+                    return 2
+                scope = (api_key, _current_policy(settings))
+            if args.install or scope:
                 print("installing in a temporary folder (uv + smoke test)...", flush=True)
-                install_check(args.directory.resolve(), settings)
+                report = install_check(args.directory.resolve(), settings, scope)
+                if report is not None:
+                    print(report.summary())
+                    if args.report:
+                        report.write_csv(args.report)
+                    if report.problem:
+                        print(f"error: {report.problem}", file=sys.stderr)
+                        return 1
             print(f"{manifest.agent_id} {manifest.version} looks good")
             return 0
         archive, digest = package_agent(args.directory, args.output)
@@ -180,6 +232,18 @@ def _developer_command(settings: Settings, args: argparse.Namespace) -> int:
     except (ValueError, ManagerError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+
+
+def _current_policy(settings: Settings) -> ContentPolicy:
+    import httpx
+
+    from .policy import PolicyClient, policy_url_for
+
+    with httpx.Client(timeout=settings.http_timeout_s) as client:
+        url = settings.policy_url or policy_url_for(settings.registry_url)
+        return PolicyClient(
+            url, settings.registry_cache_dir, client, settings.allowed_hosts, 0
+        ).get()
 
 
 def _free_port() -> int:

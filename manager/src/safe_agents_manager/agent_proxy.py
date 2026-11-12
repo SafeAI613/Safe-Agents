@@ -45,6 +45,9 @@ _DROP_REQUEST = {"host", "authorization", "content-length", "cookie", "origin", 
 _DROP_RESPONSE = {"content-length", "content-encoding", "transfer-encoding", "connection"}
 
 _SYSTEM_TYPES = {"system", "SystemMessage", "developer"}
+# The event stream stays open across runs: a run that ends mid-message (stopped, failed)
+# must release what is held, or the UI would wait forever.
+_RUN_ENDED = {"completed", "failed", "interrupted", "cancelled", "error"}
 
 
 # -- messages -------------------------------------------------------------------------------
@@ -198,6 +201,8 @@ class StreamFilter:
             self._buffer.append((event, message))
         else:
             self._buffer.append((await self._filter_other(event, data), None))
+            if method == "lifecycle" and _run_ended(data):
+                return await self.finish()
         return self._flush() if not self._open else []
 
     async def finish(self) -> list[str]:
@@ -235,6 +240,11 @@ class StreamFilter:
                 out.append(replaced.render())
         self._buffer.clear()
         return out
+
+
+def _run_ended(data: dict[str, Any]) -> bool:
+    body = (data.get("params") or {}).get("data") or {}
+    return body.get("event") in _RUN_ENDED
 
 
 def _blocked_event(event: SseEvent, message: _Message) -> SseEvent | None:
