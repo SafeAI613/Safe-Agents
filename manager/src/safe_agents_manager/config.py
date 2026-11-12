@@ -43,6 +43,8 @@ class Settings:
     # An https URL, or a local file path (handy while developing a catalog).
     registry_url: str = DEFAULT_REGISTRY_URL
     registry_cache_ttl_s: float = 300.0
+    # The content policy; None means policy.json next to registry_url.
+    policy_url: str | None = None
     allowed_hosts: frozenset[str] = DEFAULT_ALLOWED_HOSTS
     http_timeout_s: float = 30.0
     cors_origins: tuple[str, ...] = DEFAULT_CORS_ORIGINS
@@ -111,6 +113,7 @@ class Settings:
             home=home,
             uv_path=find_uv(),
             registry_url=registry_url,
+            policy_url=os.environ.get("SAFE_AGENTS_POLICY_URL") or None,
             cors_origins=origins,
             openrouter_url=os.environ.get("SAFE_AGENTS_OPENROUTER_URL") or OPENROUTER_API,
             export_dir=Path(export_dir) if export_dir else None,

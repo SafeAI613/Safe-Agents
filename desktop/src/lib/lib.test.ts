@@ -117,6 +117,14 @@ describe("runStatus", () => {
 });
 
 describe("ManagerApi", () => {
+  it("sends agent traffic to the guarded proxy with the manager token", () => {
+    const api = new ManagerApi("http://m", "t");
+    expect(api.agentConnection("/agents/foo_agent/lg")).toEqual({
+      apiUrl: "http://m/agents/foo_agent/lg",
+      defaultHeaders: { Authorization: "Bearer t" },
+    });
+  });
+
   it("sends the token and maps API errors", async () => {
     const fetchImpl = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
       expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer t");

@@ -8,6 +8,8 @@ test.describe.configure({ mode: "serial" });
 
 let page: Page;
 
+const GUARDED_COST = /עלות השיחה: \$[\d.]+ · [1-9]20 טוקנים בקלט/;
+
 test.beforeAll(async ({ browser }) => {
   page = await browser.newPage();
 });
@@ -59,7 +61,8 @@ test("chat: file, streaming steps, approval and cost", async () => {
   await expect(page.getByTestId("run-status")).toBeHidden();
 
   await expect(page.getByTestId("cost")).toContainText("עלות השיחה");
-  await expect(page.getByTestId("cost")).toContainText("120");
+  // 120 from the agent's model, plus 100 for each content-guard check of the conversation.
+  await expect(page.getByTestId("cost")).toHaveText(GUARDED_COST);
 });
 
 test("export writes the conversation to a file", async () => {
@@ -94,10 +97,41 @@ test("earlier conversations can be reopened", async () => {
   await open(/^foo/);
   await expect(messages).toContainText("Approved.");
   await expect(messages).not.toContainText("Rejected by the user.");
-  await expect(page.getByTestId("cost")).toContainText("120");
+  await expect(page.getByTestId("cost")).toHaveText(GUARDED_COST);
 
   await open(/^bar/);
   await expect(messages).toContainText("Rejected by the user.");
+});
+
+test("content guard: a question outside the agent's task is not sent to it", async () => {
+  await page.getByRole("button", { name: "שיחה חדשה" }).click();
+  await page.getByLabel("הודעה לאייג'נט").fill("off-topic lorem");
+  await page.getByRole("button", { name: "שליחה" }).click();
+  await expect(page.getByRole("alert")).toContainText("אינה קשורה לתפקיד של האייג'נט");
+  await expect(page.getByTestId("messages")).not.toContainText("Lorem ipsum dolor sit amet.");
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+});
+
+test("content guard: an answer against the policy is hidden live and in history", async () => {
+  await page.getByRole("button", { name: "שיחה חדשה" }).click();
+  await page.getByLabel("הודעה לאייג'נט").fill("repeat: hidden-answer lorem");
+  await page.getByRole("button", { name: "שליחה" }).click();
+  const messages = page.getByTestId("messages");
+  const notice = "התוכן הוסתר: הוא אינו עומד במדיניות התוכן של הפלטפורמה.";
+  await expect(messages).toContainText(notice);
+  const approval = page.getByRole("alertdialog", { name: "האייג'נט מבקש אישור" });
+  await expect(approval).toContainText(notice); // the request repeats the answer
+  await expect(approval).not.toContainText("hidden-answer lorem");
+  await expect(messages.locator(".message-ai", { hasText: "hidden-answer" })).toHaveCount(0);
+  await approval.getByRole("button", { name: "דחייה" }).click();
+  await expect(messages).toContainText("Rejected by the user.");
+
+  const picker = page.getByLabel("שיחות קודמות");
+  const value = await picker.locator("option", { hasText: /^repeat/ }).getAttribute("value");
+  await page.getByRole("button", { name: "שיחה חדשה" }).click();
+  await picker.selectOption(value ?? "");
+  await expect(messages).toContainText(notice);
+  await expect(messages.locator(".message-ai", { hasText: "hidden-answer" })).toHaveCount(0);
 });
 
 test("help panel shows the agent's examples", async () => {
@@ -111,6 +145,10 @@ test("settings show the key and the recorded usage", async () => {
   await page.getByRole("button", { name: "הגדרות" }).click();
   await expect(page.getByText("e2e key")).toBeVisible();
   await expect(page.locator("table")).toContainText("meta-llama/llama-3.1-70b-instruct");
+
+  const filter = page.getByRole("article", { name: "סינון תוכן" });
+  await expect(filter).toContainText("ברירת המחדל של האפליקציה"); // no policy.json in the e2e catalog
+  await expect(filter).toContainText("openai/gpt-4o-mini");
 
   const support = page.getByRole("article", { name: "אודות ותמיכה" });
   await expect(support).toContainText("0.1.0");

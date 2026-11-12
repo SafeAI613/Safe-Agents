@@ -30,6 +30,7 @@ from .installer import EventSink, Installer, InstallEvent, InstallStep, SmokeTes
 from .jobs import Job, JobRunner
 from .manifest import parse_manifest
 from .openrouter import OpenRouterClient, Pricing
+from .policy import ContentPolicy, PolicyClient, policy_url_for
 from .ports import PortAllocator
 from .registry import Catalog, RegistryClient, parse_version
 from .secret_store import GLOBAL_KEYS, SecretProvider, SecretStore
@@ -61,6 +62,13 @@ class AgentManager:
         )
         self.registry = RegistryClient(
             settings.registry_url,
+            settings.registry_cache_dir,
+            self.http,
+            settings.allowed_hosts,
+            settings.registry_cache_ttl_s,
+        )
+        self.policy = PolicyClient(
+            settings.policy_url or policy_url_for(settings.registry_url),
             settings.registry_cache_dir,
             self.http,
             settings.allowed_hosts,
@@ -102,8 +110,6 @@ class AgentManager:
         info = agent.to_dict()
         handle = self.supervisor.get(agent.id)
         info["status"] = "running" if handle else "stopped"
-        info["url"] = handle.url if handle else None
-        info["token"] = handle.token if handle else None
         manifest = agent.manifest.raw
         info["examples"] = manifest.get("examples_of_suitable_questions", [])
         info["tasks"] = manifest.get("tasks_capable_of_performing", [])
@@ -413,6 +419,20 @@ class AgentManager:
 
     def pricing(self, *, refresh: bool = False) -> Pricing:
         return self.openrouter.pricing(refresh=refresh)
+
+    def content_policy(self, *, refresh: bool = False) -> ContentPolicy:
+        return self.policy.get(refresh=refresh)
+
+    def record_guard_usage(
+        self, agent_id: str, thread_id: str, model: str, input_tokens: int, output_tokens: int
+    ) -> None:
+        """Cost of a content-guard check, counted with the conversation it protected."""
+        item = UsageItem(f"guard:{uuid4().hex}", model, input_tokens, output_tokens)
+        try:
+            pricing = self.pricing()
+        except ManagerError:
+            pricing = {}
+        self.usage.record(agent_id, thread_id, [item], pricing)
 
     def record_usage(self, agent_id: str, thread_id: str, items: list[UsageItem]) -> int:
         self.get_agent(agent_id)

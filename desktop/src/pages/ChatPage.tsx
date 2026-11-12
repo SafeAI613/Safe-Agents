@@ -86,40 +86,39 @@ function ChatSession({ agent, started }: { agent: InstalledAgent; started: Start
   const [showHelp, setShowHelp] = useState(false);
   const [dragging, setDragging] = useState(false);
 
-  // Callbacks given to useStream read the latest values through refs.
-  const latest = useRef({
-    threadId,
-    model,
-    messages: [] as ReturnType<typeof useStream>["messages"],
-  });
+  // Async callbacks check the current conversation through a ref before showing results.
+  const latest = useRef({ threadId });
 
   const [historyVersion, setHistoryVersion] = useState(0);
   const client = useMemo(
-    () => new Client({ apiUrl: started.url, apiKey: started.token }),
-    [started.url, started.token],
+    () => new Client(api.agentConnection(started.proxy_path)),
+    [api, started.proxy_path],
   );
   const stream = useStream({
     client,
     assistantId: started.graph_id,
     threadId,
     onThreadId: setThreadId,
-    onCompleted: () => {
-      void reportUsage();
-      setHistoryVersion((v) => v + 1);
-    },
+    onCompleted: () => setHistoryVersion((v) => v + 1),
   });
-  latest.current = { threadId, model, messages: stream.messages };
+  latest.current = { threadId };
 
-  async function reportUsage() {
-    const { threadId: thread, model: current, messages } = latest.current;
-    const items = usageItems(messages, current);
-    if (!thread || items.length === 0) return;
-    try {
-      setUsage(await api.recordUsage(agent.id, thread, items));
-    } catch {
-      // Cost tracking must never break the conversation.
-    }
-  }
+  // Report token usage once a run has ended and whenever more of it arrives afterwards: the
+  // content guard can deliver a checked message after the run's "completed" event.
+  const reported = useRef("");
+  useEffect(() => {
+    if (stream.isLoading || !threadId) return;
+    const items = usageItems(stream.messages, model);
+    const key = `${threadId}:${items.map((item) => item.message_id).join(",")}`;
+    if (items.length === 0 || key === reported.current) return;
+    reported.current = key;
+    api
+      .recordUsage(agent.id, threadId, items)
+      .then((summary) => {
+        if (latest.current.threadId === threadId) setUsage(summary);
+      })
+      .catch(() => undefined); // cost tracking must never break the conversation
+  }, [api, agent.id, model, stream.isLoading, stream.messages, threadId]);
 
   async function submit(event?: FormEvent) {
     event?.preventDefault();

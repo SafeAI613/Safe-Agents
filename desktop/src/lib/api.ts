@@ -2,6 +2,7 @@ import { ApiError } from "./errors";
 import { readSse } from "./sse";
 import type {
   About,
+  ContentPolicy,
   Catalog,
   InstallEvent,
   InstalledAgent,
@@ -44,6 +45,14 @@ export class ManagerApi {
     const data: unknown = await response.json().catch(() => null);
     if (!response.ok) throw toApiError(response.status, data);
     return data as T;
+  }
+
+  /** Where the LangGraph SDK reaches an agent: the manager's guarded proxy, never the agent. */
+  agentConnection(proxyPath: string): { apiUrl: string; defaultHeaders: Record<string, string> } {
+    return {
+      apiUrl: `${this.baseUrl}${proxyPath}`,
+      defaultHeaders: { Authorization: `Bearer ${this.token}` },
+    };
   }
 
   // agents
@@ -122,6 +131,7 @@ export class ManagerApi {
 
   // support
   about = () => this.request<About>("GET", "/about");
+  policy = () => this.request<ContentPolicy>("GET", "/policy");
   managerLog = (tail = 300) =>
     this.request<{ lines: string[] }>("GET", `/logs/manager?tail=${tail}`);
 

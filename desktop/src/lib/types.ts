@@ -17,8 +17,6 @@ export interface InstalledAgent {
   accepts_files: string[];
   hitl: boolean;
   status: "running" | "stopped";
-  url: string | null;
-  token: string | null;
   examples: string[];
   tasks: string[];
   permissions: string[];
@@ -91,9 +89,8 @@ export interface Job {
 export interface StartedAgent {
   agent_id: string;
   graph_id: string;
-  url: string;
-  port: number;
-  token: string;
+  /** The agent API behind the content guard, relative to the manager URL. */
+  proxy_path: string;
   started_at: string;
 }
 
@@ -102,6 +99,12 @@ export interface SettingsStatus {
   langsmith_key_set: boolean;
   idle_timeout_s: number;
   exports_dir: string;
+}
+
+export interface ContentPolicy {
+  classifier_model: string;
+  blocked_topics: string[];
+  source: "catalog" | "cache" | "bundled";
 }
 
 export interface About {

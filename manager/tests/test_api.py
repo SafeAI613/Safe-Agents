@@ -90,7 +90,8 @@ def test_start_stop_logs_uninstall(
     manager.install_archive(make_agent_zip())
     started = client.post("/agents/foo_agent/start", headers=AUTH).json()
     assert started["graph_id"] == "foo_agent"
-    assert started["url"].startswith("http://127.0.0.1:")
+    assert started["proxy_path"] == "/agents/foo_agent/lg"
+    assert "token" not in started and "url" not in started  # the agent is reached via the guard
     assert client.get("/agents/foo_agent", headers=AUTH).json()["status"] == "running"
 
     logs = client.get("/agents/foo_agent/logs", params={"tail": 5}, headers=AUTH).json()

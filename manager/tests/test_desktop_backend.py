@@ -157,12 +157,14 @@ def test_agent_receives_its_scoped_secrets_and_tracing(
     store.set("FOO_TOKEN", "foo-secret", agent_id="foo_agent")
     store.set("LANGSMITH_API_KEY", "ls-key")
     info = client.post("/agents/foo_agent/start", headers=AUTH).json()
-    assert info["token"]
+    assert "token" not in info  # stays in the manager; the UI goes through the guarded proxy
+    handle = desktop.supervisor.get("foo_agent")
+    assert handle is not None
     env = json.loads((desktop.get_agent("foo_agent").install_dir / "env.json").read_text())
     assert env["FOO_TOKEN"] == "foo-secret"
     assert env["LANGSMITH_TRACING"] == "true"
     assert env["LANGSMITH_PROJECT"] == "safe-agents-foo_agent"
-    assert env["SAFE_AGENTS_AGENT_TOKEN"] == info["token"]
+    assert env["SAFE_AGENTS_AGENT_TOKEN"] == handle.token
 
 
 def test_missing_secrets_are_reported(client: TestClient) -> None:

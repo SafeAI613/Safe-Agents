@@ -5,6 +5,13 @@ import { LogsDialog } from "../components/LogsDialog";
 import { useApi } from "../lib/context";
 import { formatUsd } from "../lib/messages";
 import { useAsync } from "../lib/useAsync";
+import type { ContentPolicy } from "../lib/types";
+
+const POLICY_SOURCES: Record<ContentPolicy["source"], string> = {
+  catalog: "קטלוג האייג'נטים",
+  cache: "עותק שמור מהקטלוג",
+  bundled: "ברירת המחדל של האפליקציה",
+};
 
 export function SettingsPage({ onKeyRemoved }: { onKeyRemoved: () => void }) {
   const api = useApi();
@@ -12,6 +19,7 @@ export function SettingsPage({ onKeyRemoved }: { onKeyRemoved: () => void }) {
   const keyInfo = useAsync(() => api.openRouterStatus(), [api]);
   const usage = useAsync(() => api.usage(), [api]);
   const about = useAsync(() => api.about(), [api]);
+  const policy = useAsync(() => api.policy(), [api]);
   const [showLog, setShowLog] = useState(false);
   const [newKey, setNewKey] = useState("");
   const [langsmith, setLangsmith] = useState("");
@@ -174,6 +182,23 @@ export function SettingsPage({ onKeyRemoved }: { onKeyRemoved: () => void }) {
               </table>
             )}
           </>
+        )}
+      </article>
+
+      <article className="card stack" aria-label="סינון תוכן">
+        <h2>סינון תוכן</h2>
+        <p className="muted">
+          כל הודעה נבדקת לפני שהיא נשלחת לאייג'נט: היא צריכה להתאים לתפקיד שלו ולמדיניות התוכן של
+          הפלטפורמה. גם כל תשובה נבדקת לפני שהיא מוצגת. הבדיקה נעשית דרך OpenRouter, והעלות שלה
+          נכללת בעלות השיחה.
+        </p>
+        {policy.data && (
+          <dl className="facts">
+            <dt>מקור המדיניות</dt>
+            <dd>{POLICY_SOURCES[policy.data.source]}</dd>
+            <dt>מודל הבדיקה</dt>
+            <dd dir="ltr">{policy.data.classifier_model}</dd>
+          </dl>
         )}
       </article>
 

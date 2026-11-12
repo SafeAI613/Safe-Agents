@@ -24,12 +24,14 @@ from fastapi import (
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from . import __version__
+from .agent_proxy import AgentProxy
 from .errors import ManagerError
+from .guard import ContentGuard
 from .service import AgentManager
 from .usage import UsageItem
 
@@ -78,7 +80,7 @@ def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def create_app(manager: AgentManager, token: str) -> FastAPI:
+def create_app(manager: AgentManager, token: str, guard: ContentGuard | None = None) -> FastAPI:
     bearer = HTTPBearer(auto_error=False)
 
     def require_token(
@@ -91,9 +93,20 @@ def create_app(manager: AgentManager, token: str) -> FastAPI:
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
+    guard = guard or ContentGuard(
+        manager.settings.db_path,
+        manager.settings.openrouter_url,
+        api_key=lambda: manager.secrets.get("OPENROUTER_API_KEY"),
+        policy=manager.content_policy,
+        on_usage=manager.record_guard_usage,
+    )
+    proxy = AgentProxy(manager, guard)
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         yield
+        await proxy.aclose()
+        await guard.aclose()
         manager.shutdown()  # never leave agent servers running after the manager exits
 
     app = FastAPI(title="Safe-Agents Manager", version=__version__, lifespan=lifespan)
@@ -101,8 +114,9 @@ def create_app(manager: AgentManager, token: str) -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(manager.settings.cors_origins),
-        allow_methods=["GET", "POST", "PUT", "DELETE"],
-        allow_headers=["authorization", "content-type"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+        # The LangGraph SDK adds its own headers to the proxied agent API.
+        allow_headers=["*"],
     )
 
     @app.exception_handler(ManagerError)
@@ -200,9 +214,8 @@ def create_app(manager: AgentManager, token: str) -> FastAPI:
         return {
             "agent_id": agent_id,
             "graph_id": handle.graph_id,
-            "url": handle.url,
-            "port": handle.port,
-            "token": handle.token,
+            # The UI reaches the agent only through the guarded proxy below.
+            "proxy_path": f"/agents/{agent_id}/lg",
             "started_at": handle.started_at,
         }
 
@@ -287,6 +300,16 @@ def create_app(manager: AgentManager, token: str) -> FastAPI:
         thread_id: str | None = None,
     ) -> dict[str, Any]:
         return manager.usage.summary(agent_id, thread_id)
+
+    @router.get("/policy")
+    def policy(refresh: bool = False) -> dict[str, Any]:
+        return manager.content_policy(refresh=refresh).to_dict()
+
+    @router.api_route(
+        "/agents/{agent_id}/lg/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"]
+    )
+    async def agent_api(agent_id: AgentId, path: str, request: Request) -> Response:
+        return await proxy.handle(request, agent_id, path)
 
     @router.post("/exports", status_code=status.HTTP_201_CREATED)
     def export(body: ExportRequest) -> dict[str, Any]:
