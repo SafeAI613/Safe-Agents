@@ -31,6 +31,15 @@ npm install
 SAFE_AGENTS_DEV_MANAGER="uv run --project ../manager safe-agents-manager" npm run tauri dev
 ```
 
+ב-Windows (PowerShell):
+
+```powershell
+$env:SAFE_AGENTS_DEV_MANAGER="uv run --project ../manager safe-agents-manager"
+npm run tauri dev
+```
+
+נתיב יחסי בפקודה נפתר מתיקיית `desktop/`. נתיב עם רווחים לא נתמך.
+
 אפשר גם לעבוד על הממשק בדפדפן רגיל מול Manager שרץ בנפרד:
 
 ```bash

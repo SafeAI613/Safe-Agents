@@ -95,7 +95,15 @@ pub fn spawn(app: &AppHandle, shared: Arc<Shared>) -> Result<(), String> {
         Ok(cmdline) => {
             let mut parts = cmdline.split_whitespace();
             let program = parts.next().ok_or("SAFE_AGENTS_DEV_MANAGER is empty")?;
-            app.shell().command(program).args(parts)
+            // `tauri dev` runs the app from src-tauri; resolve relative paths in the
+            // command from desktop/, where the README tells developers to run it.
+            let desktop_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .ok_or("src-tauri has no parent folder")?;
+            app.shell()
+                .command(program)
+                .args(parts)
+                .current_dir(desktop_dir)
         }
         Err(_) => app
             .shell()
